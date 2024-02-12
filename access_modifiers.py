@@ -804,9 +804,6 @@ def create_api():
                                 return True
                             return False
 
-                        hidden_values = hidden_store.value.hidden_values
-                        hidden_values["auth_codes"].add(force_get_attr.__code__)
-                        hidden_values["auth_codes"].add(search_bases.__code__)
                         def get_private(self, hidden_values, name):                            
                             authorized_caller = check_caller(hidden_values, depth = 2, name = name)
 
@@ -841,6 +838,11 @@ def create_api():
                             else:
                                 self.raise_PrivateError(name, depth = 2)
 
+                        hidden_values = hidden_store.value.hidden_values
+                        hidden_values["auth_codes"].add(force_get_attr.__code__)
+                        hidden_values["auth_codes"].add(search_bases.__code__)
+                        hidden_values["auth_codes"].add(get_private.__code__)
+                        
                         # unrolling no_redirect for performance reasons
                         obj_will_redirect = "redirect_access" in hidden_values and hidden_values["redirect_access"] == True
                         try:
@@ -2238,7 +2240,7 @@ def create_api():
                         if api_self.is_function(value):
                             untrusted_func = value
                             def trusted_method(itself, *args, **kwargs):
-                                return untrusted_func(self, *args, **kwargs)
+                                return untrusted_func(itself._self_, *args, **kwargs)
                             value = trusted_method                            
                         setattr(self.cls, name, value)
                         
@@ -2270,6 +2272,7 @@ def create_api():
                         self.private.raise_ProtectedError2 = self.raise_ProtectedError2
                         self.private.create_secure_method = self.create_secure_method
                         self.private.get_class_attr = self.get_class_attr
+                        inst._self_ = self
 
                     __init__(self, inst)
 
@@ -2359,8 +2362,8 @@ def create_api():
                 def create_secure_method(self, method):
                     hidden_method = self.get_hidden_value(self.hidden_values, method)
                     def secure_method(*args, **kwargs):
-                        """wrap the method to prevent possible bypasses through its __self__ attribute"""                        
-                        return hidden_method.value(*args, **kwargs)                      
+                        """wrap the method to prevent possible bypasses through its __self__ attribute"""
+                        return hidden_method.value(*args, **kwargs)
                     self.authorize(secure_method)
                     return secure_method
 

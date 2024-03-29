@@ -191,6 +191,19 @@ def create_api():
 
 
         @property
+        def get_all_subclasses2(api_self):
+            def get_all_subclasses2(cls):
+                    all_subclasses = []
+                    for subclass in cls._subclasses_:
+                        all_subclasses.append(subclass)
+                        all_subclasses.extend(get_all_subclasses2(subclass))
+                    all_subclasses = list(set(all_subclasses))
+                    return all_subclasses
+                
+            return get_all_subclasses2        
+
+
+        @property
         def Modifier(api_self):
             class Modifier:
                 def __init__(self, setter):
@@ -364,10 +377,12 @@ def create_api():
                               "AccessEssentials",
                               "InsecureRestrictor",
                               "base_publics",
-                              "base_protecteds"]
+                              "base_protecteds",
+                              "_subclasses_"]
 
                 base_publics = []
                 base_protecteds = []
+                _subclasses_ = []
                 
                 def get_methods(self):
                     """Get all the methods of this object, including all the public and protected methods coming from its ancestors"""
@@ -547,15 +562,22 @@ def create_api():
                             return types.MethodType(func, self)
                     return object.__getattribute__(self, name)
 
+                    
                 def is_subclass_method(self, depth = 1):
                     depth += 1          
-                    caller = sys._getframe(depth).f_code                
+                    caller = sys._getframe(depth).f_code
                     subclasses = api_self.get_all_subclasses(type(self))
                     is_function = api_self.is_function                  
                     for subclass in subclasses:
                         for member in subclass.__dict__.values():
                             if is_function(member) and member.__code__ == caller:
-                                return True                            
+                                return True
+                    subclasses = api_self.get_all_subclasses2(self.cls)
+                    for subclass in subclasses:
+                        if hasattr(subclass, caller.co_name):
+                            member = getattr(subclass, caller.co_name)
+                            if is_function(member) and member.__code__ == caller:
+                                return True
                     return False
 
                 def search_bases(self, bases, caller, name):
@@ -1019,9 +1041,9 @@ def create_api():
                                     _protecteds_ = object.__getattribute__(self, "_protecteds_")                                        
                                 authorized_caller = check_caller(hidden_values, depth = depth, name = name)                                
                                 if enforce and is_private and not authorized_caller and name not in public_names and name not in _protecteds_ and not inherited:
-                                    hidden_values["raise_PrivateError"](name, depth)
+                                    self.raise_PrivateError(name, depth)
                                 elif enforce and is_private and not authorized_caller and name not in public_names:
-                                    hidden_values["raise_ProtectedError"](name, depth)
+                                    self.raise_ProtectedError(name, depth)
                                 elif is_private and not authorized_caller and name == "_class_":                                    
                                     value = get_attr("_class_")
                                 elif is_private and not authorized_caller and name in ["base_publics", "base_protecteds", "_privates_", "_protecteds_"]:
@@ -1821,15 +1843,26 @@ def create_api():
                     dct["_mro"] = metacls.get_mro(bases)
                     cls = type.__new__(metacls, name, bases, dct)
                     return cls
+
+                @classmethod
+                def update_subclasses(metacls, bases, cls):
+                    for base in bases:
+                        not_wrapper_descriptor = hasattr(type(base).__getattribute__, "__code__")
+                        if not_wrapper_descriptor:
+                            if type(base).__getattribute__.__code__ == api_self.create_object_proxy_meta(0).__getattribute__.__code__:                                
+                                base = type(base).__getattribute__.__closure__[0].cell_contents.cls
+                                base._subclasses_.append(cls)
                     
-                def __new__(metacls, name, bases, dct):
-                    bases = api_self.make_real_bases(bases)                    
+                def __new__(metacls, name, bases, dct):                    
+                    bases = api_self.make_real_bases(bases)
                     bases = metacls.add_access_essentials(bases)                    
                     if metacls.has_conflicts(bases):
                         InsecureRestrictor = metacls.resolve_conflicts(bases)
                         return InsecureRestrictor(name, bases, dct)
                     else:
-                        return metacls.create_class(name, bases, dct)               
+                        cls = metacls.create_class(name, bases, dct)
+                        metacls.update_subclasses(bases, cls)
+                        return cls              
 
                 @property
                 def __bases__(cls):
@@ -1990,6 +2023,7 @@ def create_api():
                             if is_function(member):
                                 authorize(member)
                         authorize(api_self.InsecureRestrictor.modify_attr)
+                        authorize(api_self.InsecureRestrictor.update_subclasses)
 
                         private.raise_PrivateError2 = self.raise_PrivateError2
                         private.raise_ProtectedError2 = self.raise_ProtectedError2
@@ -2188,9 +2222,10 @@ def create_api():
                             except AttributeError:
                                 is_private = name in base_protecteds
                                 inherited = True
+
                         authorized_caller = check_caller(hidden_values, depth = 5, name = name)
                         has_protected_access = is_subclass_method(depth = 5)                                
-                        if is_private and name not in public_names and name not in _protecteds_ and not inherited:                            
+                        if is_private and name not in public_names and name not in _protecteds_ and not inherited and not authorized_caller:
                             raise_PrivateError2(name, depth = 5)
                         elif is_meta_method(self, hidden_values, name, value) and name != "has_own_attr":
                             raise PrivateError(sys._getframe(5).f_code.co_name, name, type(self.cls).__name__)
@@ -2518,7 +2553,7 @@ def create_api():
                     cls._bases = metacls.remove_access_essentials(cls.__bases__)                                    
                     cls._mro = metacls.remove_access_essentials(cls.__mro__)                    
                     
-                def __new__(metacls, name, bases, dct):                    
+                def __new__(metacls, name, bases, dct):
                     new_class = super(metacls, metacls).__new__(metacls, name, bases, dct)
                     modifier_backup = api_self.default
                     api_self.set_default(api_self.public)                    

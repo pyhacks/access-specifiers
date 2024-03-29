@@ -126,12 +126,13 @@ class Test4(metaclass = access_modifiers.create_restrictor(Test9, Test2, Test3))
     _protecteds_ = ["var1"]
     var1 = 7
     abc = 43
-
+        
     @access_modifiers.public
     def test4_func(self):
         self.set_private("a", 15)
         self.a
         self.a = 15
+        Test.abc
         self.__init__()
         
     def test4_func2(self):
@@ -151,7 +152,8 @@ class Test4(metaclass = access_modifiers.create_restrictor(Test9, Test2, Test3))
     
 
 class Test6(metaclass = access_modifiers.Restrictor):
-    var2 = access_modifiers.protected(345)    
+    var2 = access_modifiers.protected(345)
+    var3 = access_modifiers.protected(574)
     
     @access_modifiers.private
     def func2(self, obj):
@@ -189,6 +191,9 @@ class Test5(Test8, metaclass = access_modifiers.create_restrictor(Test2, Test7))
         real_Test6.func1(real_Test6(), self)
         Test8.func3(self)
 
+    def my_func2(self):
+        print(Test6.var3)
+
 
 class Test10(metaclass = access_modifiers.create_restrictor(Test5)):
     pass
@@ -204,6 +209,7 @@ class Test11(access_modifiers.HalfRestricted):
 class Test12:
     def func(self, obj):
         print(obj.a)
+        
 
 def test():
     t = Test()
@@ -215,6 +221,9 @@ def test():
     y = Test4()
     y.func()
     y.test4_func()
+
+    z = Test5()
+    z.my_func2()
 
 
 test()

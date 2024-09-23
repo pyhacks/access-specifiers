@@ -43,7 +43,7 @@ class MyClass(access_modifiers.Restricted):
     a = access_modifiers.private(10) 
 
     @access_modifiers.private
-    def func():
+    def func(self):
         pass
 ```
 Alternatively, you can also use a fancier syntax:
@@ -77,7 +77,7 @@ class MyClass(access_modifiers.Restricted):
 ```
 Again, the dot in between is required. These modifiers belong to the object. That means a derived class can access private members defined in a base class method. 
 Because since there is no type casting in python, that base class method processed a derived class object, not a base class object. 
-This is in contrast with access_modifiers.PrivateModifier or access_modifiers.private. Derived classes can't access class variables/methods defined with access_modifiers.private. 
+This is in contrast with access_modifiers.PrivateModifier or access_modifiers.private. Derived classes can't access class variables/functions defined with access_modifiers.private. 
 
 _function_ access_modifiers.**set_default**(modifier)
 

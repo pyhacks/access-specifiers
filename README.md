@@ -123,47 +123,34 @@ _method_ AccessEssentials.**create_getattribute**(depth = 1)
 
 Return a \_\_getattribute__ function which checks the access rights of the function _depth_ times back in the stack. 
 Useful when you write a custom \_\_getattribute__ and don't wanna manually check the caller. If you write a custom \_\_getattribute__ function, you may get recursion error. 
-In order to prevent this set _redirect_access_ to false. This variable controls which getters should be called. 
-Another thing to note is stack structure may not always be the same. You need to think about every possibility when specifying the _depth_ parameter. Unfortunately there is no easier way:
+In order to prevent this set _redirect_access_ to false. This variable controls which getters should be called:
 ```python
     def __getattribute__(self, name):
         self.own_hidden_values["redirect_access"] = False
-        if sys._getframe(1).f_code == access_modifiers.SecureInstance._getattribute_.__code__:
-            getter = self.create_getattribute(depth = 2)
-        else:
-            getter = self.create_getattribute(depth = 1)
+        getter = self.create_getattribute()
         try:
-            value = getter(name) # may raise AttributeError
+            value = getter(name) # may raise AttributeError           
         finally:
             self.own_hidden_values["redirect_access"] = True
         return value
 ```
-Lastly, if you write a custom \_\_getattribute__ function in a base class, you need to override it in a derived class. Otherwise you may get _PrivateError_.
 
 _method_ AccessEssentials.**create_setattr**(depth = 1)
 
 Return a \_\_setattr__ function which checks the access rights of the function _depth_ times back in the stack. 
-Useful when you write a custom \_\_setattr__ and don't wanna manually check the caller. 
-Stack structure may not always be the same. You need to think about every possibility when specifying the _depth_ parameter:
+Useful when you write a custom \_\_setattr__ and don't wanna manually check the caller:
 ```python
     def __setattr__(self, name, value):
-        if sys._getframe(1).f_code == access_modifiers.SecureInstance._setattr_.__code__:
-            setter = self.create_setattr(depth = 2)
-        else:
-            setter = self.create_setattr(depth = 1)
+        setter = self.create_setattr()
         setter(name, value)
 ```
 _method_ AccessEssentials.**create_delattr**(depth = 1)
 
 Return a \_\_delattr__ function which checks the access rights of the function _depth_ times back in the stack. 
-Useful when you write a custom \_\_delattr__ and don't wanna manually check the caller. 
-Stack structure may not always be the same. You need to think about every possibility when specifying the _depth_ parameter:
+Useful when you write a custom \_\_delattr__ and don't wanna manually check the caller:
 ```python
     def __delattr__(self, name):
-        if sys._getframe(1).f_code == access_modifiers.SecureInstance._delattr_.__code__:
-            deleter = self.create_delattr(depth = 2)
-        else:
-            deleter = self.create_delattr(depth = 1)
+        deleter = self.create_delattr()
         deleter(name)
 ```
 

@@ -13,7 +13,7 @@ In order to make access modifiers available to your simple class, you need to in
 class MyClass(access_modifiers.Restricted):
     pass
 ```
-Metaclass of _Restricted_ is _Restrictor_. And _Restrictor_ causes your class to inherit from _AccessEssentials_ class.
+Metaclass of _Restricted_ is _Restrictor_.
 If you need to inherit from classes which inherit from _Restricted_, you first need to create a new metaclass.
 
 access_modifiers.**create_restrictor**(*bases)
@@ -65,7 +65,7 @@ class MyClass(access_modifiers.Restricted):
 ```
 The dot (.) in between the modifier and the name is required.
 
-You can also specify access modifiers for object attributes. As stated above, your class will automatically inherit from _AccessEssentials_. _AccessEssentials_ objects store _Modifier_ objects. 
+You can also specify access modifiers for object attributes. _Restricted_ objects store _Modifier_ objects. 
 You can use them as modifiers:
 ```python
 class MyClass(access_modifiers.Restricted):
@@ -97,29 +97,29 @@ _function_ access_modifiers.**super**(obj_or_cls)
 
 This function is equivalent to the built in super function: Returns a proxy object to the superclass of obj_or_cls. It should be used when the built in function doesn't work. Works only outside the class.
 
-_AccessEssentials_ class provides a few more useful functions:
+_Restricted_ class provides a few more useful functions:
 
-_method_ AccessEssentials.**set_private**(name, value)
+_method_ Restricted.**set_private**(name, value)
 
-_method_ AccessEssentials.**set_protected**(name, value)
+_method_ Restricted.**set_protected**(name, value)
 
-_method_ AccessEssentials.**set_public**(name, value)
+_method_ Restricted.**set_public**(name, value)
 
 You can specify modifiers for dynamically generated variable names.
 
-_method_ AccessEssentials.**get_private**(name)
+_method_ Restricted.**get_private**(name)
 
 Get any member which is not public. Works for not only privates but also protecteds.
 
-_method_ AccessEssentials.**authorize**(func_or_cls)
+_method_ Restricted.**authorize**(func_or_cls)
 
 Allow func_or_cls to access private/protected members of this object. This function acts like the "friend" keyword of c++. Only works from inside the class.
 
-_method_ AccessEssentials.**super**(obj_or_cls = None)
+_method_ Restricted.**super**(obj_or_cls = None)
 
 This function is equivalent to the built in super function: Returns a proxy object to the superclass of obj_or_cls. It should be used when the built in function doesn't work. Works only inside the class.
 
-_method_ AccessEssentials.**create_getattribute**(depth = 1)
+_method_ Restricted.**create_getattribute**(depth = 1)
 
 Return a \_\_getattribute__ function which checks the access rights of the function _depth_ times back in the stack. 
 Useful when you write a custom \_\_getattribute__ and don't wanna manually check the caller. If you write a custom \_\_getattribute__ function, you may get recursion error. 
@@ -135,7 +135,7 @@ In order to prevent this set _redirect_access_ to false. This variable controls 
         return value
 ```
 
-_method_ AccessEssentials.**create_setattr**(depth = 1)
+_method_ Restricted.**create_setattr**(depth = 1)
 
 Return a \_\_setattr__ function which checks the access rights of the function _depth_ times back in the stack. 
 Useful when you write a custom \_\_setattr__ and don't wanna manually check the caller:
@@ -144,7 +144,7 @@ Useful when you write a custom \_\_setattr__ and don't wanna manually check the 
         setter = self.create_setattr()
         setter(name, value)
 ```
-_method_ AccessEssentials.**create_delattr**(depth = 1)
+_method_ Restricted.**create_delattr**(depth = 1)
 
 Return a \_\_delattr__ function which checks the access rights of the function _depth_ times back in the stack. 
 Useful when you write a custom \_\_delattr__ and don't wanna manually check the caller:

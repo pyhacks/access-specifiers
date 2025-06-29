@@ -1,6 +1,8 @@
 import sys
 import types
+import time
 
+calls = {}
 
 class AccessError(Exception):
     def set_err(self):
@@ -17,18 +19,19 @@ class AccessError(Exception):
         self.recreate = False
         self.err = err
         
-    def init2(self, caller_name, member_name, class_name, class_attr = False, inherited = False, private = True):
+    def init2(self, caller_name, member_name, class_name, class_attr = False, inherited = False, private = True, caller = None):
         self.recreate = True
-        if private:
-            self.modifier = "private"
-        else:
-            self.modifier = "protected"
         self.caller_name = caller_name
         self.member_name = member_name
         self.class_name = class_name
         self.base_name = class_name
         self.class_attr = class_attr
         self.inherited = inherited
+        if private:
+            self.modifier = "private"
+        else:
+            self.modifier = "protected"
+        self.caller = caller        
         self.set_err()        
         
     def __init__(self, *args, **kwargs):
@@ -65,6 +68,11 @@ def create_api():
     class Api:
         """Property mechanism prevents possible bypasses based on modifying classes and functions.
         (Functions can be modified by overwriting their __code__ attribute)"""
+        AccessError = AccessError
+        PrivateError = PrivateError
+        ProtectedError = ProtectedError
+
+        
         @property
         def is_same_dict(api_self): # TODO: only check functions
             def is_same_dict(dict1, dict2):                                    
@@ -169,7 +177,13 @@ def create_api():
         @property        
         def is_function(api_self):
             def is_function(func):
-                if callable(func) and hasattr(func, "__code__") and type(func.__code__) == types.CodeType:
+                try:
+                    code = object.__getattribute__(func, "__code__")
+                except AttributeError:
+                    has_code = type(func) == types.MethodType
+                else:
+                    has_code = True
+                if callable(func) and has_code and type(func.__code__) == types.CodeType:
                     return True
                 else:
                     return False
@@ -193,12 +207,11 @@ def create_api():
         @property
         def get_all_subclasses2(api_self):
             def get_all_subclasses2(cls):
-                    all_subclasses = []
-                    for subclass in cls._subclasses_:
-                        all_subclasses.append(subclass)
-                        all_subclasses.extend(get_all_subclasses2(subclass))
-                    all_subclasses = list(set(all_subclasses))
-                    return all_subclasses
+                all_subclasses = []
+                for subclass in cls._subclasses_:
+                    all_subclasses.append(subclass)
+                all_subclasses = list(set(all_subclasses))
+                return all_subclasses
                 
             return get_all_subclasses2        
 
@@ -295,10 +308,10 @@ def create_api():
         @property
         def get_secure_bases(api_self):
             def get_secure_bases(cls, is_access_essentials, bases, for_subclass = False):
-                blacklists = api_self.get_blacklists(cls, is_access_essentials, bases, for_subclass)
-                bases = api_self.replace_base(bases, blacklists[0], "NotAccessEssentials")
-                bases = api_self.replace_base(bases, blacklists[1], "PrivateBaseClass")
-                bases = api_self.replace_base(bases, blacklists[2], "ProtectedBaseClass")
+                #blacklists = api_self.get_blacklists(cls, is_access_essentials, bases, for_subclass)
+                #bases = api_self.replace_base(bases, blacklists[0], "NotAccessEssentials")
+                #bases = api_self.replace_base(bases, blacklists[1], "PrivateBaseClass")
+                #bases = api_self.replace_base(bases, blacklists[2], "ProtectedBaseClass")
                 if not for_subclass:
                     bases = api_self.close_gates(bases)                
                 return bases
@@ -333,6 +346,8 @@ def create_api():
                 Fortunately, real instances aren't available externally. Only SecureInstance instances can be passed.
                 When self is a SecureInstance (or even SecureClass) object,
                 self.static_dict guarantees an exception is raised."""
+                ae_class_id = "access_modifiers.AccessEssentials"
+                
                 _protecteds_ = ["get_methods",
                                 "no_redirect",
 
@@ -344,6 +359,7 @@ def create_api():
                                 "raise_PrivateError",
                                 "raise_ProtectedError",
 
+                                "is_meta_method",
                                 "get_base_attr",                                                                  
                                 "get_attr",
                                 "super",
@@ -378,37 +394,32 @@ def create_api():
                               "InsecureRestrictor",
                               "base_publics",
                               "base_protecteds",
-                              "_subclasses_"]
+                              "base_privates",
+                              "_subclasses_",
+                              "objs"]
 
                 base_publics = []
                 base_protecteds = []
+                base_privates = []
                 _subclasses_ = []
+                objs = []
                 
                 def get_methods(self):
-                    """Get all the methods of this object, including all the public and protected methods coming from its ancestors"""
+                    """Get all the methods of this object"""
                     try:
                         self.static_dict
                     except PrivateError:
                         raise ProtectedError("class level access is disallowed for this function")
                     methods = {}
-                    all_names = object.__dir__(self) + self._protecteds_ + self.base_publics + self.base_protecteds # don't trust self.__dir__
-                    all_names = list(set(all_names))                    
+                    all_names = object.__dir__(self) # don't trust self.__dir__
                     is_function = api_self.is_function
                     for member_name in all_names:                        
                         try:
-                            member = getattr(self, member_name)                            
+                            member = object.__getattribute__(self, member_name)
                         except AttributeError:                
-                            continue
-                        except PrivateError:
-                            continue                        
+                            continue                      
                         if is_function(member):                            
                             methods[member_name] = member.__code__
-                    if "__init__" not in methods:
-                        for base in type(self).__mro__:
-                            member = base.__init__
-                            if is_function(member):
-                                methods["__init__"] = member.__code__
-                                break
                     return methods
 
                 def no_redirect(self, hidden_values):
@@ -431,6 +442,7 @@ def create_api():
                                 if cls_will_redirect:
                                     type(self).own_redirect_access = True
 
+                        redirection_stopper.func = func
                         hidden_values["auth_codes"].add(func.__code__)
                         hidden_values["auth_codes"].add(redirection_stopper.__code__)
                         return redirection_stopper                    
@@ -442,7 +454,14 @@ def create_api():
 
                 def raise_ProtectedError(self, name, depth = 1):
                     depth += 1
-                    raise ProtectedError(sys._getframe(depth).f_code.co_name, name, type(self).__name__)                
+                    raise ProtectedError(sys._getframe(depth).f_code.co_name, name, type(self).__name__)
+
+                def is_meta_method(self, name, value):
+                    if hasattr(self.InsecureRestrictor, name):
+                        function = getattr(self.InsecureRestrictor, name)
+                        if api_self.is_function(value) and value.__code__ == function.__code__:
+                            return True
+                    return False                
 
                 def get_base_attr(self, name):
                     try:
@@ -456,7 +475,7 @@ def create_api():
                     except PrivateError as e:
                         e.caller_name = sys._getframe(1).f_code.co_name
                         e.class_attr = False
-                        raise                                                                                    
+                        raise                                                                                
                     if api_self.is_function(value) and type(value) != types.MethodType:
                         value = types.MethodType(value, self)
                     elif type(value) == types.MethodType:
@@ -478,6 +497,20 @@ def create_api():
                         except PrivateError as e:
                             e.caller_name = sys._getframe(1).f_code.co_name
                             raise
+                    else:                                    
+                        is_builtin_new = name == "_new_" and value == object.__new__
+                        is_builtin_new2 = name == "__new__" and value == object.__new__
+                        is_builtin_in = type(value) == types.MethodWrapperType
+                        if is_builtin_new or is_builtin_new2 or is_builtin_in:
+                            try:
+                                value2 = AccessEssentials.get_base_attr(self, name)
+                                if type(value2) != types.WrapperDescriptorType:
+                                    value = value2                                                
+                            except AttributeError:
+                                pass
+                            except PrivateError as e:
+                                e.caller_name = sys._getframe(1).f_code.co_name
+                                raise                        
                     return value
 
                 def super(self, obj_or_cls = None):
@@ -486,18 +519,49 @@ def create_api():
                     except PrivateError:
                         raise ProtectedError("class level access is disallowed for this function")
                     if obj_or_cls is None:
-                        obj_or_cls = self                    
+                        obj_or_cls = self
+                        default = True
+                    else:
+                        default = False
                     class super:
-                        __slots__ = ["obj_or_cls"]
+                        __slots__ = ["obj_or_cls", "default"]
 
-                        def __init__(self, obj_or_cls):
+                        def __init__(self, obj_or_cls, default):
                             self.obj_or_cls = obj_or_cls
-                            
+                            self.default = default
+                        
                         def __getattribute__(self, name): # Duplication is deliberate. We need different code objects to prevent a bypass.
                             obj_or_cls = object.__getattribute__(self, "obj_or_cls")
+                            default = object.__getattribute__(self, "default")
                             try:
-                                if not isinstance(obj_or_cls, type):
+                                if not isinstance(obj_or_cls, type) and not default:
                                     value = obj_or_cls.get_base_attr(name)
+                                elif not isinstance(obj_or_cls, type):
+                                    caller = sys._getframe(1).f_code
+                                    bases = list(type(obj_or_cls).__mro__)
+                                    bases.insert(0, type(obj_or_cls))
+                                    bases = tuple(bases)                                    
+                                    for base in bases:                                        
+                                        try:
+                                            protected_gate = type.__getattribute__(base, "protected_gate")
+                                            delattr(base, "protected_gate")
+                                        except AttributeError:
+                                            has_own_attr = False
+                                        else:
+                                            setattr(base, "protected_gate", protected_gate)
+                                            has_own_attr = True                            
+                                        if has_own_attr:
+                                            base = type.__getattribute__(base, "protected_gate").cls                                        
+                                        if hasattr(base, "static_dict"):
+                                            dct = base.static_dict
+                                        else:
+                                            dct = base.__dict__
+                                        for member_name in dct:
+                                            member = dct[member_name]
+                                            if api_self.is_function(member) and member.__code__ == caller:
+                                                value = base.get_unbound_base_attr(name)
+                                                if api_self.is_function(value):
+                                                    value = types.MethodType(value, obj_or_cls)
                                 else:
                                     value = obj_or_cls.get_unbound_base_attr(name)
                             except AttributeError:
@@ -522,7 +586,7 @@ def create_api():
                                 return str(super(obj_or_cls, obj_or_cls))
 
                     self.authorize(super.__getattribute__)
-                    return super(obj_or_cls)
+                    return super(obj_or_cls, default)
 
                 def public_super(self, obj_or_cls = None):
                     if obj_or_cls is None:
@@ -561,50 +625,101 @@ def create_api():
                         if api_self.is_function(func) and type(func) != types.MethodType:                            
                             return types.MethodType(func, self)
                     return object.__getattribute__(self, name)
-
                     
-                def is_subclass_method(self, depth = 1):
+                def is_subclass_method(self, hidden_values, depth = 1, return_subclass = False):
+                    def get_all_subclasses(cls):
+                        """We have to duplicate this function for performance reasons"""
+                        all_subclasses = []
+                        for subclass in type.__getattribute__(cls, "__subclasses__")():
+                            all_subclasses.append(subclass)
+                            all_subclasses.extend(get_all_subclasses(subclass))
+                        all_subclasses = list(set(all_subclasses))
+                        return all_subclasses
+
+                    def get_all_subclasses2(cls):
+                        """We have to duplicate this function for performance reasons"""
+                        all_subclasses = []
+                        for subclass in cls._subclasses_:
+                            all_subclasses.append(subclass)
+                        all_subclasses = list(set(all_subclasses))
+                        return all_subclasses
+                    
+                    def is_function(func):
+                        """We have to duplicate this function for performance reasons"""
+                        try:
+                            code = object.__getattribute__(func, "__code__")
+                        except AttributeError:
+                            has_code = type(func) == types.MethodType
+                        else:
+                            has_code = True
+                        if callable(func) and has_code and type(func.__code__) == types.CodeType:
+                            return True
+                        else:
+                            return False                    
+                    
                     depth += 1          
                     caller = sys._getframe(depth).f_code
-                    subclasses = api_self.get_all_subclasses(type(self))
-                    is_function = api_self.is_function                  
+                    subclasses = get_all_subclasses(type(self))                  
                     for subclass in subclasses:
                         for member in subclass.__dict__.values():
-                            if is_function(member) and member.__code__ == caller:
+                            if is_function(member) and member.__code__ == caller and not return_subclass:
                                 return True
-                    subclasses = api_self.get_all_subclasses2(self.cls)
+                            elif is_function(member) and member.__code__ == caller:
+                                return True, subclass.cls.own_hidden_values["cls"]
+                    if "cls" in hidden_values:
+                        subclasses = get_all_subclasses2(hidden_values["cls"])
+                    else:
+                        subclasses = get_all_subclasses2(type(self))
                     for subclass in subclasses:
-                        if hasattr(subclass, caller.co_name):
-                            member = getattr(subclass, caller.co_name)
-                            if is_function(member) and member.__code__ == caller:
-                                return True
-                    return False
-
-                def search_bases(self, bases, caller, name):
-                    """return True if caller is authorized by a base (not necessarily a base method)"""
-                    for base in bases:
                         try:
-                            pg = type.__getattribute__(base, "protected_gate")                            
-                        except AttributeError:                            
-                            continue # no need to repeat the work of get_methods()
-                        hidden_values = pg.cls.own_hidden_values
-                        if name not in pg.cls._privates_:
-                            if self.search_bases(hidden_values["cls"].__bases__, caller, name):
+                            type.__getattribute__(subclass, caller.co_name)
+                        except AttributeError:
+                            pass
+                        else:
+                            member = getattr(subclass, caller.co_name)
+                            if is_function(member) and type(member) != types.MethodType and member.__code__ == caller and not return_subclass:
                                 return True
-                            continue
-                        if caller in hidden_values["auth_codes"]:
+                            elif is_function(member) and type(member) != types.MethodType and member.__code__ == caller:                                
+                                return True, subclass
+                            if hasattr(subclass, "_new_"):
+                                member = subclass._new_
+                                if is_function(member) and member.__code__ == caller and not return_subclass:
+                                    return True
+                                elif is_function(member) and member.__code__ == caller:
+                                    return True, subclass
+                    if not return_subclass:
+                        return False
+                    else:
+                        return False, None
+
+                def search_bases(self, hidden_values, bases, caller, name):
+                    """return True if caller is authorized by a base (not necessarily a base method)"""
+                    def get_member(self, hidden_values, name):
+                        """We have to duplicate this function because we can't trust AccessEssentials.get_member
+                        This function must be read only and immutable, not just protected.
+                        Otherwise derived classes could bypass private members of their bases.
+                        Functions aren't immutable in python so we completely hide it this way."""                        
+                        if name in hidden_values:
+                            return hidden_values[name]
+                        elif hasattr(AccessEssentials, name):
+                            func = getattr(AccessEssentials, name)
+                            if api_self.is_function(func) and type(func) != types.MethodType:                            
+                                return types.MethodType(func, self)
+                        return object.__getattribute__(self, name)
+
+                    def is_function(func):
+                        """We have to duplicate this function for performance reasons"""
+                        try:
+                            code = object.__getattribute__(func, "__code__")
+                        except AttributeError:
+                            has_code = type(func) == types.MethodType
+                        else:
+                            has_code = True
+                        if callable(func) and has_code and type(func.__code__) == types.CodeType:
                             return True
-                        elif self.search_bases(hidden_values["cls"].__bases__, caller, name):
-                            return True                        
-                    return False
+                        else:
+                            return False
 
-                def check_caller(self, hidden_values, depth = 1, name = "hidden_values"):
-                    """Go depth frames back in stack and check if the associated caller is authorized to access the name
-
-                    Name is assumed to be either private or protected.
-                    This function should not be called if the name is public.
-                    Because even if it's public, it'll be treated as if it were private.
-                    In that case, return value will probably be wrong."""
                     def get_base_attr(name):
                         """static_dict check would cause infinite recursion, so we have to duplicate this function."""
                         try:
@@ -614,25 +729,158 @@ def create_api():
                         except PrivateError as e:
                             e.caller_name = sys._getframe(1).f_code.co_name
                             e.class_attr = False
-                            raise                                                        
-                        is_function = api_self.is_function                        
+                            raise                                                                                
+                        if is_function(value) and type(value) != types.MethodType:
+                            value = types.MethodType(value, self)
+                        elif type(value) == types.MethodType:
+                            raise AttributeError(name)
+                        return value                        
+
+                    AccessEssentials2 = get_member(self, hidden_values, "AccessEssentials2")
+                    search_bases = types.MethodType(AccessEssentials2.search_bases, self)                    
+                    for base in bases:                        
+                        try:
+                            found = hasattr(type(self), name)
+                        except PrivateError:
+                            found = True
+
+                        try:
+                            value = type.__getattribute__(base, "protected_gate")
+                            delattr(base, "protected_gate")
+                        except AttributeError:
+                            has_own_attr = False
+                        else:
+                            setattr(base, "protected_gate", value)
+                            has_own_attr = True                            
+                        if has_own_attr:
+                            base = type.__getattribute__(base, "protected_gate").cls                            
+                            is_secure_class = True
+                        else:
+                            if not hasattr(base, "_privates_"):
+                                continue # no need to repeat the work of get_methods()
+                            is_secure_class = False
+
+                        inherited_private = False
+                        if name not in hidden_values and name != "hidden_values":
+                            try:
+                                get_base_attr(name)
+                            except AttributeError:
+                                pass
+                            except PrivateError:
+                                inherited_private = True                    
+                        not_from_base = name not in base._privates_ and (inherited_private or name not in base.base_protecteds) and name not in base.base_privates                            
+                        if name not in hidden_values and name != "hidden_values" and found and not_from_base:
+                            if is_secure_class:
+                                bases2 = base.own_hidden_values["cls"].__bases__
+                            else:
+                                bases2 = base.__bases__                                
+                            if search_bases(hidden_values, bases2, caller, name):
+                                return True
+                            continue
+                        
+                        if is_secure_class and caller in base.own_hidden_values["auth_codes"]:
+                            return True
+                        elif not is_secure_class:
+                            for member_name in base.__dict__.keys():  
+                                try:
+                                    member = type.__getattribute__(base, member_name)
+                                except AttributeError:
+                                    continue
+                                if is_function(member) and caller == member.__code__:
+                                    return True
+                                
+                        if is_secure_class:
+                            mro = base.own_hidden_values["cls"].__mro__
+                        else:
+                            mro = base.__mro__                            
+                        for base in mro:
+                            try:
+                                value = type.__getattribute__(base, "protected_gate")
+                                delattr(base, "protected_gate")
+                            except AttributeError:
+                                has_own_attr = False
+                            else:
+                                setattr(base, "protected_gate", value)
+                                has_own_attr = True                            
+                            if has_own_attr:
+                                base = type.__getattribute__(base, "protected_gate").cls                            
+                                is_secure_class = True
+                            else:
+                                if not hasattr(base, "_privates_"):
+                                    continue # no need to repeat the work of get_methods()
+                                is_secure_class = False                          
+                                
+                            if is_secure_class and caller in base.own_hidden_values["auth_codes"]:
+                                return True
+                            elif not is_secure_class:
+                                for member_name in dir(base):                        
+                                    try:
+                                        member = type.__getattribute__(base, member_name)
+                                    except AttributeError:
+                                        continue             
+                                    if is_function(member) and caller == member.__code__:
+                                        return True
+                    if hasattr(AccessEssentials2, caller.co_name):
+                        member = getattr(AccessEssentials2, caller.co_name)
+                        if hasattr(member, "__code__") and member.__code__ == caller:
+                            return True
+                    return False
+
+                def check_caller(self, hidden_values, depth = 1, name = "hidden_values"):
+                    """Go depth frames back in stack and check if the associated caller is authorized to access the name
+
+                    Name is assumed to be either private or protected.
+                    This function should not be called if the name is public.
+                    Because even if it's public, it'll be treated as if it were private.
+                    In that case, return value will probably be wrong."""
+                    def is_function(func):
+                        """We have to duplicate this function for performance reasons"""
+                        try:
+                            code = object.__getattribute__(func, "__code__")
+                        except AttributeError:
+                            has_code = type(func) == types.MethodType
+                        else:
+                            has_code = True
+                        if callable(func) and has_code and type(func.__code__) == types.CodeType:
+                            return True
+                        else:
+                            return False
+                    
+                    def get_base_attr(name):
+                        """static_dict check would cause infinite recursion, so we have to duplicate this function."""
+                        try:
+                            value = type(self).get_unbound_base_attr(name)
+                        except AttributeError:
+                            raise
+                        except PrivateError as e:
+                            e.caller_name = sys._getframe(1).f_code.co_name
+                            e.class_attr = False
+                            raise                                                                                
                         if is_function(value) and type(value) != types.MethodType:
                             value = types.MethodType(value, self)
                         elif type(value) == types.MethodType:
                             raise AttributeError(name)
                         return value
+
+                    def get_member(self, hidden_values, name):
+                        """We have to duplicate this function because we can't trust AccessEssentials.get_member
+                        This function must be read only and immutable, not just protected.
+                        Otherwise derived classes could bypass private members of their bases.
+                        Functions aren't immutable in python so we completely hide it this way."""                        
+                        if name in hidden_values:
+                            return hidden_values[name]
+                        elif hasattr(AccessEssentials, name):
+                            func = getattr(AccessEssentials, name)
+                            if is_function(func) and type(func) != types.MethodType:                            
+                                return types.MethodType(func, self)
+                        return object.__getattribute__(self, name)                    
                     
                     depth += 1          
-                    caller = sys._getframe(depth).f_code                        
-                    if "_protecteds_" in hidden_values:
-                        _protecteds_ = hidden_values["_protecteds_"]
-                    else:
-                        _protecteds_ = object.__getattribute__(self, "_protecteds_")
-                    if "base_protecteds" in hidden_values:
-                        base_protecteds = hidden_values["base_protecteds"]
-                    else:
-                        base_protecteds = object.__getattribute__(self, "base_protecteds")
-                    is_protected = name in _protecteds_ or name in base_protecteds
+                    caller = sys._getframe(depth).f_code
+                    _privates_ = get_member(self, hidden_values, "_privates_")
+                    _protecteds_ = get_member(self, hidden_values, "_protecteds_")
+                    base_protecteds = get_member(self, hidden_values, "base_protecteds")
+                    base_privates = get_member(self, hidden_values, "base_privates")
                     inherited_private = False
                     if name not in hidden_values and name != "hidden_values":
                         try:
@@ -640,54 +888,61 @@ def create_api():
                         except AttributeError:
                             pass
                         except PrivateError:
-                            inherited_private = True
-                    if caller in hidden_values["auth_codes"] and not inherited_private:
+                            inherited_private = True                    
+                    if caller in hidden_values["auth_codes"] and not inherited_private:                        
                         return True
-                    if "is_subclass_method" in hidden_values:
-                        is_subclass_method = hidden_values["is_subclass_method"]
+                    is_subclass_method = types.MethodType(get_member(self, hidden_values, "AccessEssentials2").is_subclass_method, self)                    
+                    try:
+                        class_id = type.__getattribute__(type(self), "class_id")
+                    except AttributeError:
+                        has_class_id = False
                     else:
-                        is_subclass_method = types.MethodType(AccessEssentials.is_subclass_method, self)                   
-                    if is_protected and is_subclass_method(depth = depth):                                                  
+                        has_class_id = True
+                        
+                    if has_class_id and class_id == "access_modifiers.SecureClass" and "cls" in hidden_values:
+                        cls = hidden_values["cls"]
+                    else:
+                        cls = type(self)
+                    is_protected = name in _protecteds_ or (name in base_protecteds and name not in _privates_ and cls.is_protected(name))                    
+                    if is_protected and is_subclass_method(hidden_values, depth = depth):
                         return True
-                    if name not in hidden_values and name != "hidden_values":
-                        if "search_bases" in hidden_values:
-                            search_bases = hidden_values["search_bases"]
-                        else:
-                            search_bases = types.MethodType(AccessEssentials.search_bases, self)
-                        bases = type.__getattribute__(type(self), "__bases__")
-                        if search_bases(bases, caller, name):
+                    search_bases = types.MethodType(get_member(self, hidden_values, "AccessEssentials2").search_bases, self)
+                    bases = type.__getattribute__(type(self), "__bases__")
+                    bases = list(bases)
+                    bases.insert(0, type(self))
+                    bases = tuple(bases)
+                    try:
+                        if search_bases(hidden_values, bases, caller, name):                            
                             return True
+                    except TypeError:
+                        pass
                     return False
 
-                def call(self, func, *args, **kwargs):
-                    """If func is authorized, call it by passing this (raw) object as the first argument"""
-                    if api_self.SecureInstance(self).call.__code__ == func.__code__:
-                        func = func.__closure__[0].cell_contents.value
-                    if func.__code__ in self.auth_codes:
-                        return func(self, *args, **kwargs)
-                    else:
-                        raise PrivateError(f"\"{func.__code__.co_name}\" is not authorized by the \"{type(self).__name__}\" object")
-                        
-                def authorize(self, func_or_cls): # Do we really need a deauthorize() function as well?
+                def authorize(self, func_or_cls, for_all = True):
                     """Allow func_or_cls to access private/protected members of this object
 
-                    This function acts like the "friend" keyword of c++.
-                    Note that this function will not find and authorize the SecureInstance objects wrapping this object.
-                    That means func_or_cls should use a raw object, not a SecureInstance object.
-                    If you can't directly pass a raw object, call() function can do it for you."""
+                    This function acts like the "friend" keyword of c++"""                    
                     try:
                         self.static_dict
                     except PrivateError:
                         raise ProtectedError("class level access is disallowed for this function")
                     get_private = object.__getattribute__(self, "get_private")
                     hidden_values = get_private("hidden_values")                    
-                    if api_self.is_function(func_or_cls):
+                    if api_self.is_function(func_or_cls) and for_all:
+                        for obj in type(self).objs:
+                            hidden_values = obj.get_private("hidden_values")
+                            hidden_values["auth_codes"].add(func_or_cls.__code__)
+                    elif api_self.is_function(func_or_cls):
                         hidden_values["auth_codes"].add(func_or_cls.__code__)
                     else:
                         for name, member in func_or_cls.__dict__.items():
                             if isinstance(member, AccessError):
                                 member = getattr(func_or_cls.own_hidden_values["cls"], name)
-                            if api_self.is_function(member):
+                            if api_self.is_function(member) and for_all:
+                                for obj in type(self).objs:
+                                    hidden_values = obj.get_private("hidden_values")                                
+                                    hidden_values["auth_codes"].add(member.__code__)
+                            elif api_self.is_function(member):
                                 hidden_values["auth_codes"].add(member.__code__)
                     
                 def get_hidden_value(self, hidden_values, value):
@@ -727,11 +982,12 @@ def create_api():
                                 e.caller_name = sys._getframe(1).f_code.co_name
                                 e.class_attr = False
                                 raise
+                            
                             is_function = callable(value) and hasattr(value, "__code__") and type(value.__code__) == types.CodeType
                             if is_function and type(value) != types.MethodType:
                                 value = types.MethodType(value, self)
                             elif type(value) == types.MethodType:
-                                raise AttributeError(name)                                
+                                raise AttributeError(name)
                             return value
                             
                         def get_attr(hidden_values, name):
@@ -746,6 +1002,20 @@ def create_api():
                                 except PrivateError as e:
                                     e.caller_name = sys._getframe(1).f_code.co_name
                                     raise
+                            else:                                    
+                                is_builtin_new = name == "_new_" and value == object.__new__
+                                is_builtin_new2 = name == "__new__" and value == object.__new__
+                                is_builtin_in = type(value) == types.MethodWrapperType
+                                if is_builtin_new or is_builtin_new2 or is_builtin_in:
+                                    try:
+                                        value2 = get_base_attr(name)
+                                        if type(value2) != types.WrapperDescriptorType:
+                                            value = value2                                                
+                                    except AttributeError:
+                                        pass
+                                    except PrivateError as e:
+                                        e.caller_name = sys._getframe(1).f_code.co_name
+                                        raise                                
                             return value                                          
 
                         def force_get_attr(bases, name):
@@ -773,60 +1043,21 @@ def create_api():
                                     return value                                    
                             raise AttributeError(name)                                          
                             
-                        def search_bases(bases, caller, name):
-                            """We have to duplicate this function because we can't trust hidden_values["search_bases"]
-                            This function must be read only, not even private.
+                        def get_member(self, hidden_values, name):
+                            """We have to duplicate this function because we can't trust AccessEssentials.get_member
+                            This function must be read only and immutable, not just protected.
                             Otherwise derived classes could bypass private members of their bases.
-                            There is no such thing as "read only" in python so we completely hide it this way."""
-                            for base in bases:
-                                try:
-                                    pg = type.__getattribute__(base, "protected_gate")                            
-                                except AttributeError:                            
-                                    continue # no need to repeat the work of get_methods()
-                                hidden_values = pg.cls.own_hidden_values
-                                if caller in hidden_values["auth_codes"]:
-                                    return True
-                                elif search_bases(hidden_values["cls"].__bases__, caller, name):
-                                    return True               
-                            return False
+                            Functions aren't immutable in python so we completely hide it this way."""                        
+                            if name in hidden_values:
+                                return hidden_values[name]
+                            elif hasattr(AccessEssentials, name):
+                                func = getattr(AccessEssentials, name)
+                                if api_self.is_function(func) and type(func) != types.MethodType:                            
+                                    return types.MethodType(func, self)
+                            return object.__getattribute__(self, name)                    
 
-                        def check_caller(hidden_values, depth = 1, name = "hidden_values"):
-                            """We have to duplicate this function because we can't trust hidden_values["check_caller"]
-                            This function must be read only, not even private.
-                            Otherwise derived classes could bypass private members of their bases.
-                            There is no such thing as "read only" in (pure) python so we completely hide it this way."""                            
-                            depth += 1          
-                            caller = sys._getframe(depth).f_code
-                            if "_protecteds_" in hidden_values:
-                                _protecteds_ = hidden_values["_protecteds_"]
-                            else:
-                                _protecteds_ = object.__getattribute__(self, "_protecteds_")
-                            if "base_protecteds" in hidden_values:
-                                base_protecteds = hidden_values["base_protecteds"]
-                            else:
-                                base_protecteds = object.__getattribute__(self, "base_protecteds")
-                            is_protected = name in _protecteds_ or name in base_protecteds
-                            inherited_private = False
-                            if name not in hidden_values and name != "hidden_values":
-                                try:
-                                    get_base_attr(hidden_values, name)
-                                except AttributeError:
-                                    pass
-                                except PrivateError:
-                                    inherited_private = True
-                            if caller in hidden_values["auth_codes"] and not inherited_private:
-                                return True
-                            if "is_subclass_method" in hidden_values:
-                                is_subclass_method = hidden_values["is_subclass_method"]
-                            else:
-                                is_subclass_method = types.MethodType(AccessEssentials.is_subclass_method, self)                   
-                            if is_protected and is_subclass_method(depth = depth):                                                  
-                                return True                               
-                            if search_bases(type(self).__bases__, caller, name):
-                                return True
-                            return False
-
-                        def get_private(self, hidden_values, name):                            
+                        def get_private(self, hidden_values, name):
+                            check_caller = types.MethodType(get_member(self, hidden_values, "AccessEssentials2").check_caller, self)
                             authorized_caller = check_caller(hidden_values, depth = 2, name = name)
 
                             if name != "hidden_values":
@@ -852,20 +1083,19 @@ def create_api():
                                         error = class_name + " object has no private attribute " + "\"" + name + "\""
                                         raise AttributeError(error)
                             else:
-                                value = hidden_values
+                                value = hidden_values                              
                             if authorized_caller or enforce == False:              
                                 return value
-                            elif name in self._protecteds_ or name in self.base_protecteds:
+                            elif name in self._protecteds_ or (name in self.base_protecteds and name not in self._privates_ and type(self).is_protected(name)):
                                 self.raise_ProtectedError(name, depth = 2)
                             else:
                                 self.raise_PrivateError(name, depth = 2)
 
                         hidden_values = hidden_store.value.hidden_values
                         hidden_values["auth_codes"].add(force_get_attr.__code__)
-                        hidden_values["auth_codes"].add(search_bases.__code__)
                         hidden_values["auth_codes"].add(get_private.__code__)
                         
-                        # unrolling no_redirect for performance reasons
+                        # inlining no_redirect for performance reasons
                         obj_will_redirect = "redirect_access" in hidden_values and hidden_values["redirect_access"] == True
                         try:
                             cls_will_redirect = type.__getattribute__(type(self), "redirect_access")
@@ -884,6 +1114,7 @@ def create_api():
                                 type(self).own_redirect_access = True
 
                     hidden_values["auth_codes"].add(get_private.__code__)
+                    type(self)._publics_.append("get_private")
                     get_private(self, "hidden_values")
                     return get_private                    
 
@@ -893,10 +1124,10 @@ def create_api():
                     except PrivateError:
                         raise ProtectedError("class level access is disallowed for this function")                    
                     get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
                     hidden_values = get_private("hidden_values")
                     hidden_store = hidden_values["hidden_store"]
-                    @no_redirect(hidden_values)                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("hidden_values"))                                       
                     def create_getattribute(self, depth = 1, enforce = True):                    
                         depth += 4
                         def _getattribute_(self, name):
@@ -910,12 +1141,12 @@ def create_api():
                                     e.caller_name = sys._getframe(1).f_code.co_name
                                     e.class_attr = False
                                     raise
-
+                                
                                 is_function = callable(value) and hasattr(value, "__code__") and type(value.__code__) == types.CodeType
                                 if is_function and type(value) != types.MethodType:
                                     value = types.MethodType(value, self)
                                 elif type(value) == types.MethodType:
-                                    raise AttributeError(name)                                    
+                                    raise AttributeError(name)
                                 return value
                                 
                             def get_attr(name):
@@ -924,27 +1155,41 @@ def create_api():
                                     value = object.__getattribute__(self, name)
                                 except AttributeError as e:
                                     try:
-                                        value = get_base_attr(name)
+                                        value = get_base_attr(name)                                        
                                     except AttributeError:
                                         raise e
-                                    except PrivateError as e:
+                                    except PrivateError as e:                                        
                                         e.caller_name = sys._getframe(1).f_code.co_name
                                         raise
+                                else:                                    
+                                    is_builtin_new = name == "_new_" and value == object.__new__
+                                    is_builtin_new2 = name == "__new__" and value == object.__new__
+                                    is_builtin_in = type(value) == types.MethodWrapperType
+                                    if is_builtin_new or is_builtin_new2 or is_builtin_in:
+                                        try:
+                                            value2 = get_base_attr(name)
+                                            if type(value2) != types.WrapperDescriptorType:
+                                                value = value2                                                
+                                        except AttributeError:
+                                            pass
+                                        except PrivateError as e:
+                                            e.caller_name = sys._getframe(1).f_code.co_name
+                                            raise
                                 return value
 
                             def force_get_attr(bases, name):
                                 """We have to duplicate this function because it can't be a part of the library api.
                                 Otherwise that would cause a loophole"""
-                                for base in bases:
+                                for base in bases:                                    
                                     try:
                                         pg = type.__getattribute__(base, "protected_gate")                            
                                     except AttributeError:                            
-                                        continue
+                                        continue                                    
                                     hidden_values = pg.cls.own_hidden_values
                                     cls = hidden_values["cls"]
                                     try:
-                                        value = type.__getattribute__(cls, name)
-                                    except AttributeError:
+                                        value = type.__getattribute__(cls, name)                                        
+                                    except AttributeError:                                        
                                         try:
                                             return force_get_attr(cls.__bases__, name)     
                                         except AttributeError:
@@ -952,68 +1197,38 @@ def create_api():
                                     else:
                                         if api_self.is_function(value) and type(value) != types.MethodType:
                                             value = types.MethodType(value, self)
-                                        elif type(value) == types.MethodType:
-                                            continue
+                                        elif type(value) == types.MethodType:                                            
+                                            continue                                        
                                         return value                                    
                                 raise AttributeError(name)
-                            
-                            def search_bases(bases, caller, name):
-                                """We have to duplicate this function because we can't trust hidden_values["search_bases"]
-                                This function must be read only, not even private.
-                                Otherwise derived classes could bypass private members of their bases.
-                                There is no such thing as "read only" in python so we completely hide it this way."""                            
-                                for base in bases:
-                                    try:
-                                        pg = type.__getattribute__(base, "protected_gate")                            
-                                    except AttributeError:                            
-                                        continue # no need to repeat the work of get_methods()
-                                    hidden_values = pg.cls.own_hidden_values
-                                    if caller in hidden_values["auth_codes"]:
-                                        return True
-                                    elif search_bases(hidden_values["cls"].__bases__, caller, name):
-                                        return True               
-                                return False
 
-                            def check_caller(hidden_values, depth = 1, name = "hidden_values"):
-                                """We have to duplicate this function because we can't trust hidden_values["check_caller"]
-                                This function must be read only, not even private.
+                            def is_function(func):
+                                """We have to duplicate this function for performance reasons"""
+                                try:
+                                    code = object.__getattribute__(func, "__code__")
+                                except AttributeError:
+                                    has_code = type(func) == types.MethodType
+                                else:
+                                    has_code = True
+                                if callable(func) and has_code and type(func.__code__) == types.CodeType:
+                                    return True
+                                else:
+                                    return False
+                            
+                            def get_member(self, hidden_values, name):
+                                """We have to duplicate this function because we can't trust AccessEssentials.get_member
+                                This function must be read only and immutable, not just protected.
                                 Otherwise derived classes could bypass private members of their bases.
-                                There is no such thing as "read only" in (pure) python so we completely hide it this way."""                            
-                                depth += 1                                
-                                caller = sys._getframe(depth).f_code
-                                if "_protecteds_" in hidden_values:
-                                    _protecteds_ = hidden_values["_protecteds_"]
-                                else:
-                                    _protecteds_ = object.__getattribute__(self, "_protecteds_")
-                                if "base_protecteds" in hidden_values:
-                                    base_protecteds = hidden_values["base_protecteds"]
-                                else:
-                                    base_protecteds = object.__getattribute__(self, "base_protecteds")
-                                is_protected = name in _protecteds_ or name in base_protecteds
-                                inherited_private = False
-                                if name not in hidden_values and name != "hidden_values":
-                                    try:
-                                        get_base_attr(name)
-                                    except AttributeError:
-                                        pass
-                                    except PrivateError:
-                                        inherited_private = True
-                                if caller in hidden_values["auth_codes"] and not inherited_private:
-                                    return True
-                                if "is_subclass_method" in hidden_values:
-                                    is_subclass_method = hidden_values["is_subclass_method"]
-                                else:
-                                    is_subclass_method = types.MethodType(AccessEssentials.is_subclass_method, self)                   
-                                if is_protected and is_subclass_method(depth = depth):                                                  
-                                    return True
-                                if search_bases(type(self).__bases__, caller, name):
-                                    return True
-                                return False
+                                Functions aren't immutable in python so we completely hide it this way."""                        
+                                if name in hidden_values:
+                                    return hidden_values[name]
+                                elif hasattr(AccessEssentials, name):
+                                    func = getattr(AccessEssentials, name)
+                                    if is_function(func) and type(func) != types.MethodType:                            
+                                        return types.MethodType(func, self)
+                                return object.__getattribute__(self, name)                    
                                                         
-                            hidden_values = hidden_store.value.hidden_values
-                            hidden_values["auth_codes"].add(force_get_attr.__code__)
-                            hidden_values["auth_codes"].add(search_bases.__code__)
-                            def _getattribute_(self, name):
+                            def _getattribute_(self, name):                                
                                 public_names = ["_privates_",
                                                 "_protecteds_",
                                                 "_class_",
@@ -1022,31 +1237,39 @@ def create_api():
                                                 "_mro",
                                                 "_bases",
                                                 "base_publics",
-                                                "base_protecteds"]
-                                is_private = name in hidden_values or name == "hidden_values"
-                                inherited = False
+                                                "base_protecteds",
+                                                "base_privates"]
+                                _privates_ = get_member(self, hidden_values, "_privates_")
+                                is_private = name in _privates_ or name == "hidden_values"
+                                is_base_protected = False
                                 if not is_private:
                                     try:
-                                        object.__getattribute__(self, name)
+                                        value = object.__getattribute__(self, name)
+                                        object.__delattr__(self, name)
                                     except AttributeError:
-                                        if "base_protecteds" in hidden_values:
-                                            base_protecteds = hidden_values["base_protecteds"]
-                                        else:
-                                            base_protecteds = self.base_protecteds
-                                        is_private = name in base_protecteds
-                                        inherited = True
-                                if "_protecteds_" in hidden_values:
-                                    _protecteds_ = hidden_values["_protecteds_"]
-                                else:
-                                    _protecteds_ = object.__getattribute__(self, "_protecteds_")                                        
-                                authorized_caller = check_caller(hidden_values, depth = depth, name = name)                                
-                                if enforce and is_private and not authorized_caller and name not in public_names and name not in _protecteds_ and not inherited:
+                                        try:
+                                            is_private = hasattr(type(self), name) and not type(self).is_public(name)
+                                        except PrivateError:                                            
+                                            is_private = False
+                                            
+                                        if is_private and type(self).is_protected(name):
+                                            is_base_protected = True
+
+                                    except TypeError: # name is "__class__"
+                                        pass
+                                    else:
+                                        object.__setattr__(self, name, value)
+
+                                _protecteds_ = get_member(self, hidden_values, "_protecteds_")
+                                check_caller = types.MethodType(get_member(self, hidden_values, "AccessEssentials2").check_caller, self)
+                                authorized_caller = check_caller(hidden_values, depth = depth, name = name)
+                                if enforce and is_private and not authorized_caller and name not in public_names and name not in _protecteds_ and not is_base_protected:                                    
                                     self.raise_PrivateError(name, depth)
                                 elif enforce and is_private and not authorized_caller and name not in public_names:
                                     self.raise_ProtectedError(name, depth)
                                 elif is_private and not authorized_caller and name == "_class_":                                    
                                     value = get_attr("_class_")
-                                elif is_private and not authorized_caller and name in ["base_publics", "base_protecteds", "_privates_", "_protecteds_"]:
+                                elif is_private and not authorized_caller and name in ["base_publics", "base_protecteds", "base_privates", "_privates_", "_protecteds_"]:
                                     value = list(hidden_values[name])
                                 elif is_private and not authorized_caller and name in ["__bases__", "__mro__", "_mro", "_bases"]:
                                     value = api_self.get_secure_bases(type(self), self.InsecureRestrictor.is_access_essentials, hidden_values[name])
@@ -1055,17 +1278,21 @@ def create_api():
                                 elif name == "hidden_values":
                                     value = hidden_values
                                 else:
-                                    try:                                       
+                                    try:                                        
                                         value = get_attr(name)
                                     except PrivateError as e:
                                         if not authorized_caller:
                                             e.caller_name = sys._getframe(depth).f_code.co_name
                                             raise
-                                        else:
-                                            value = force_get_attr(type(self).__bases__, name)
+                                        else:                                            
+                                            value = force_get_attr(type(self).__bases__, name)                                            
                                 return value
 
-                            # unrolling no_redirect for performance reasons
+                            hidden_values = hidden_store.value.hidden_values
+                            hidden_values["auth_codes"].add(force_get_attr.__code__)
+                            hidden_values["auth_codes"].add(_getattribute_.__code__)
+
+                            # inlining no_redirect for performance reasons
                             obj_will_redirect = "redirect_access" in hidden_values and hidden_values["redirect_access"] == True
                             try:
                                 cls_will_redirect = type.__getattribute__(type(self), "redirect_access")
@@ -1095,15 +1322,15 @@ def create_api():
                     except PrivateError:
                         raise ProtectedError("class level access is disallowed for this function")                    
                     get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
-                    @no_redirect(get_private("hidden_values"))                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("hidden_values"))                                        
                     def create_setattr(self, depth = 1):                    
                         depth += 5
                         def _setattr_(self, name, value):
                             get_private = object.__getattribute__(self, "get_private")
                             hidden_values = get_private("hidden_values")
-                            no_redirect = get_private("no_redirect")
-                            @no_redirect(hidden_values)
+                            no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                            @no_redirect(get_private("hidden_values"))                    
                             def _setattr_(self, name, value):
                                 is_private = name in hidden_values or name == "hidden_values"
                                 authorized_caller = AccessEssentials.check_caller(self, hidden_values, depth = depth, name = name)
@@ -1116,23 +1343,25 @@ def create_api():
                                 elif name == "hidden_values":
                                     hidden_values.clear()
                                     hidden_values.update(value)
-                                elif hasattr(self, name):                                
-                                    object.__setattr__(self, name, value)
                                 else:
-                                    authorized_caller = AccessEssentials.check_caller(self, hidden_values, depth = depth, name = name)
-                                    if not authorized_caller and api_self.default.__code__ == api_self.private.__code__:
-                                        self.raise_PrivateError(name, depth)
-                                    elif not authorized_caller and api_self.default.__code__ == api_self.protected.__code__:
-                                        self.raise_ProtectedError(name, depth)
-                                    elif api_self.default.__code__ == api_self.private.__code__:
-                                        self.set_private(name, value)
-                                    elif api_self.default.__code__ == api_self.protected.__code__:
-                                        self.set_protected(name, value)
+                                    try:
+                                        object.__getattribute__(self, name)
+                                    except AttributeError:
+                                        if not authorized_caller and api_self.default.__code__ == api_self.private.__code__:
+                                            self.raise_PrivateError(name, depth)
+                                        elif not authorized_caller and api_self.default.__code__ == api_self.protected.__code__:
+                                            self.raise_ProtectedError(name, depth)
+                                        elif api_self.default.__code__ == api_self.private.__code__:
+                                            self.set_private(name, value)
+                                        elif api_self.default.__code__ == api_self.protected.__code__:
+                                            self.set_protected(name, value)
+                                        else:
+                                            self.set_public(name, value)
                                     else:
-                                        object.__setattr__(self, name, value)
+                                        self.set_public(name, value)                                     
                                     
                             _setattr_(self, name, value)
-
+                        
                         self.authorize(_setattr_)
                         _setattr_ = types.MethodType(_setattr_, self)
                         return _setattr_
@@ -1145,15 +1374,15 @@ def create_api():
                     except PrivateError:
                         raise ProtectedError("class level access is disallowed for this function")                    
                     get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
-                    @no_redirect(get_private("hidden_values"))                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("hidden_values"))                                       
                     def create_delattr(self, depth = 1):                    
                         depth += 5
                         def _delattr_(self, name):
                             get_private = object.__getattribute__(self, "get_private")
                             hidden_values = get_private("hidden_values")
-                            no_redirect = get_private("no_redirect")
-                            @no_redirect(hidden_values)
+                            no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                            @no_redirect(get_private("hidden_values"))
                             def _delattr_(self, name):
                                 is_private = name in hidden_values or name == "hidden_values"
                                 authorized_caller = AccessEssentials.check_caller(self, hidden_values, depth = depth, name = name)
@@ -1166,6 +1395,11 @@ def create_api():
                                     del hidden_values[name]
                                 elif name == "hidden_values":
                                     hidden_values.clear()
+                                if name in self._privates_ and name not in type(self)._privates_:
+                                    self._privates_.remove(name)
+                                if name in self._protecteds_ and name not in type(self)._protecteds_:
+                                    self._protecteds_.remove(name)
+                                                                    
                             _delattr_(self, name)
 
                         self.authorize(_delattr_)
@@ -1188,14 +1422,8 @@ def create_api():
 
                     def own_raise_PrivateError(self, name, depth = 3):                        
                         depth += 1
-                        if "raise_PrivateError" in hidden_values:
-                            raise_PrivateError = hidden_values["raise_PrivateError"]
-                        else:
-                            raise_PrivateError = types.MethodType(AccessEssentials.raise_PrivateError, self)
-                        if "no_redirect" in hidden_values:
-                            no_redirect = hidden_values["no_redirect"]
-                        else:
-                            no_redirect = types.MethodType(AccessEssentials.no_redirect, self)
+                        raise_PrivateError = AccessEssentials.get_member(self, hidden_values, "raise_PrivateError")
+                        no_redirect = AccessEssentials.get_member(self, hidden_values, "no_redirect")
                         factory = no_redirect(hidden_values)
                         raise_PrivateError = factory(raise_PrivateError)
                         raise_PrivateError(name, depth)
@@ -1222,10 +1450,34 @@ def create_api():
                     insecure_getter = create_getter(default_insecure_getter)
                     self.authorize(secure_getter)
                     hidden_store.value.secure_getter = secure_getter
-                    def __getattribute__(self, name):                            
+                    def __getattribute__(self, name):
+                        """this function is for debug purposes"""
+                        start = time.time()
+                        try:                            
+                            secure_getter = hidden_store.value.secure_getter
+                            value = secure_getter(self, name)                           
+                        finally:
+                            stop = time.time()
+                            runtime = stop - start
+                            frame = sys._getframe(1)
+                            if frame in calls:
+                                calls[frame][0] += 1
+                                calls[frame][1].append(frame.f_lineno)
+                                calls[frame][2] += runtime 
+                            else:
+                                try:
+                                    #second_lineno = frame.f_back.f_back.f_back.f_back.f_lineno # get_unbound_base_attr
+                                    second_lineno = frame.f_back.f_back.f_back.f_lineno
+                                except AttributeError:
+                                    second_lineno = -1
+                                calls[frame] = [1, [frame.f_lineno], runtime, frame.f_back.f_back.f_lineno, second_lineno]                        
+                        return value
+
+                    def __getattribute__(self, name):
                         secure_getter = hidden_store.value.secure_getter
-                        return secure_getter(self, name)
-                    
+                        value = secure_getter(self, name)
+                        return value
+                        
                     self.authorize(__getattribute__)
                     type(self).__getattribute__ = __getattribute__
 
@@ -1291,30 +1543,48 @@ def create_api():
                         hidden_values.clear()
                         hidden_values.update(value)
                     def set_private(self, name, value):
-                        if "_privates_" in hidden_values:
-                            _privates_ = hidden_values["_privates_"]
-                        else:
-                            _privates_ = object.__getattribute__(self, "_privates_")
-                        if "_protecteds_" in hidden_values:
-                            _protecteds_ = hidden_values["_protecteds_"]
-                        else:
-                            _protecteds_ = object.__getattribute__(self, "_protecteds_")
-                        if "authorize" in hidden_values:
-                            authorize = hidden_values["authorize"]
-                        else:
-                            authorize = types.MethodType(AccessEssentials.authorize, self)                        
+                        def is_function(func):
+                            """We have to duplicate this function for performance reasons"""
+                            try:
+                                code = object.__getattribute__(func, "__code__")
+                            except AttributeError:
+                                has_code = type(func) == types.MethodType
+                            else:
+                                has_code = True
+                            if callable(func) and has_code and type(func.__code__) == types.CodeType:
+                                return True
+                            else:
+                                return False
+                        
+                        def get_member(self, hidden_values, name):
+                            """We have to duplicate this function because we can't trust AccessEssentials.get_member
+                            This function must be read only and immutable, not just protected.
+                            Otherwise derived classes could bypass private members of their bases.
+                            Functions aren't immutable in python so we completely hide it this way."""                        
+                            if name in hidden_values:
+                                return hidden_values[name]
+                            elif hasattr(AccessEssentials, name):
+                                func = getattr(AccessEssentials, name)
+                                if is_function(func) and type(func) != types.MethodType:                            
+                                    return types.MethodType(func, self)
+                            return object.__getattribute__(self, name)                    
+                        
+                        _privates_ = get_member(self, hidden_values, "_privates_")
+                        _protecteds_ = get_member(self, hidden_values, "_protecteds_")
+                        is_function = get_member(self, hidden_values, "Api").is_function
                         if name != "hidden_values" and name not in _privates_:
                             _privates_.append(name)
                         elif name in _protecteds_:
                             _protecteds_.remove(name)
-                        if api_self.is_function(value):
-                            authorize(value)
+                        if is_function(value):
+                            hidden_values["auth_codes"].add(value.__code__)
                         try:
                             object.__setattr__(self, name, PrivateError("private member"))
                         except AttributeError:
                             pass
 
-                    # unrolling no_redirect for performance reasons
+                    hidden_values["auth_codes"].add(set_private.__code__)
+                    # inlining no_redirect for performance reasons
                     obj_will_redirect = "redirect_access" in hidden_values and hidden_values["redirect_access"] == True
                     try:
                         cls_will_redirect = type.__getattribute__(type(self), "redirect_access")
@@ -1339,20 +1609,12 @@ def create_api():
                         raise ProtectedError("class level access is disallowed for this function")                  
                     get_private = object.__getattribute__(self, "get_private")
                     hidden_values = get_private("hidden_values")
-                    no_redirect = get_private("no_redirect")
-                    @no_redirect(hidden_values)
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("hidden_values"))                    
                     def set_protected(self, name, value):
-                        if "set_private" in hidden_values:
-                            set_private = hidden_values["set_private"]
-                        else:
-                            set_private = types.MethodType(AccessEssentials.set_private, self)
-                        if "_protecteds_" in hidden_values:
-                            _protecteds_ = hidden_values["_protecteds_"]
-                        else:
-                            _protecteds_ = object.__getattribute__(self, "_protecteds_")
-                        set_private(name, value)
-                        if name not in _protecteds_:
-                            _protecteds_.append(name)
+                        self.set_private(name, value)
+                        if name not in self._protecteds_:
+                            self._protecteds_.append(name)
                         try:
                             object.__setattr__(self, name, ProtectedError("protected member"))                        
                         except AttributeError:
@@ -1364,12 +1626,17 @@ def create_api():
                         self.static_dict
                     except PrivateError:
                         raise ProtectedError("class level access is disallowed for this function")                   
-                    if hasattr(self, name):                        
-                        delattr(self, name)                        
+                    if hasattr(self, name):
+                        try:
+                            delattr(self, name)
+                        except AttributeError:
+                            pass
                         if name in self._privates_:
                             self._privates_.remove(name)                        
                         if name in self._protecteds_:
-                            self._protecteds_.remove(name)                    
+                            self._protecteds_.remove(name)
+                    if api_self.is_function(value):
+                        self.authorize(value)                    
                     object.__setattr__(self, name, value)                       
                     
                 def start_access_check(self):
@@ -1378,7 +1645,9 @@ def create_api():
                     except PrivateError:
                         raise ProtectedError("class level access is disallowed for this function")                    
                     methods = self.get_methods()
-                    hidden_values = {"auth_codes": set(methods.values())}
+                    auth_codes = set(methods.values())
+                    auth_codes.add(api_self.get_all_subclasses2.__code__)
+                    hidden_values = {"auth_codes": auth_codes}
                     def get_private(self, name):
                         if name == "hidden_values":
                             return hidden_values
@@ -1392,7 +1661,7 @@ def create_api():
                     hidden_store = self.get_hidden_value(hidden_values, hidden_store)
                     hidden_values["hidden_store"] = hidden_store                    
                     hidden_store.value.hidden_values = hidden_values
-                    type(self).get_private = self.create_get_private(hidden_values, enforce = True)
+                    type(self).get_private = self.create_get_private(hidden_values, enforce = True)                    
                     self.mask_public_face(hidden_values)
 
                 def ready_to_redirect(self):
@@ -1415,7 +1684,8 @@ def create_api():
                     
                     self.set_private("_privates_", self._privates_)
                     self.set_private("_protecteds_", self._protecteds_)
-                    self.set_private("AccessEssentials", self.AccessEssentials)
+                    self.set_private("AccessEssentials2", self.AccessEssentials2)
+                    self.set_private("AccessEssentials3", self.AccessEssentials3)
                     self.set_private("InsecureRestrictor", self.InsecureRestrictor)
                     self.set_private("Api", self.Api)
                     if hasattr(self, "_getattribute_"):
@@ -1429,7 +1699,7 @@ def create_api():
                     self.set_private("protected", api_self.Modifier(self.set_protected))
                     self.set_private("public", api_self.Modifier(self.set_public))
                     if hasattr(self, "secure_class"):
-                        self.private._class_ = self.secure_class.cls                        
+                        self.private._class_ = type(self)                        
                     self.ready_to_redirect()            
                     
                 def pre_init(self):
@@ -1439,7 +1709,8 @@ def create_api():
                         raise ProtectedError("class level access is disallowed for this function")
                     self._privates_ = list(self._privates_)
                     self._protecteds_ = list(self._protecteds_)
-                    self.AccessEssentials = api_self.AccessEssentials
+                    self.AccessEssentials2 = api_self.AccessEssentials
+                    self.AccessEssentials3 = api_self.AccessEssentials
                     self.InsecureRestrictor = api_self.InsecureRestrictor
                     try:
                         get_private = object.__getattribute__(api_self, "get_private")
@@ -1449,7 +1720,7 @@ def create_api():
                         self.Api = get_private("api")
                     self.start_access_check()                    
                     self.init_privates()
-                    
+                    self.super()
                                         
             return AccessEssentials  
 
@@ -1458,6 +1729,7 @@ def create_api():
         def create_protected_gate(api_self):
             def create_protected_gate(base):
                 class ProtectedGate(type(base)):
+                    class_id = "access_modifiers.ProtectedGate"
                     _privates_ = []
                     _protecteds_ = []                    
                     cls = base
@@ -1469,7 +1741,7 @@ def create_api():
                     __setattr__ = object.__setattr__
                     __delattr__ = object.__delattr__
                                                                        
-                    def getter(self, name):                                                
+                    def getter(self, name):
                         return getattr(base, name)
 
                     def setter(self, name, value):
@@ -1477,8 +1749,12 @@ def create_api():
 
                     def deleter(self, name):
                         delattr(base, name)                    
-               
-                return ProtectedGate()
+
+                pg = ProtectedGate()
+                type(pg).__getattribute__ = object.__getattribute__
+                type(pg).__setattr__ = object.__setattr__
+                type(pg).__delattr__ = object.__delattr__                                
+                return pg
             
             return create_protected_gate
 
@@ -1539,19 +1815,11 @@ def create_api():
             class InsecureRestrictor(type):
                 @classmethod
                 def acts_access_essentials(metacls, base):
-                    AccessEssentials = api_self.AccessEssentials
-                    is_function = api_self.is_function
-                    for name in AccessEssentials.__dict__:
-                        try:
-                            if not hasattr(base, name):
-                                return False
-                        except PrivateError:
-                            continue
-                        member = getattr(base, name)
-                        ae_member = getattr(AccessEssentials, name)
-                        both_function = is_function(member) and is_function(ae_member)
-                        if both_function and member.__code__ != ae_member.__code__:                                
-                            return False                                                          
+                    try:
+                        if not hasattr(base, "ae_class_id") or base.ae_class_id != "access_modifiers.AccessEssentials":
+                            return False
+                    except PrivateError:
+                        pass
                     return True
 
                 @classmethod
@@ -1559,7 +1827,8 @@ def create_api():
                     if not metacls.acts_access_essentials(base):
                         return False
                     try:
-                        hasattr(base, "static_dict")
+                        if hasattr(base, "static_dict"):
+                            return False
                     except PrivateError:
                         return False
                     else:
@@ -1568,23 +1837,25 @@ def create_api():
                 @classmethod
                 def remove_access_essentials(metacls, bases):
                     new_bases = list(bases)
-                    for base in bases:
+                    for base in bases:                        
                         if metacls.is_access_essentials(base):
                             new_bases.remove(base)
                     return tuple(new_bases)
 
                 @classmethod
                 def add_access_essentials(metacls, bases):
-                    bases = metacls.remove_access_essentials(bases)
+                    for base in bases:
+                        if metacls.acts_access_essentials(base):
+                            return bases                    
                     bases = list(bases)
-                    bases.insert(0, api_self.AccessEssentials)
+                    bases.append(api_self.AccessEssentials)
                     bases = tuple(bases)                                       
                     return bases                    
                     
                 @classmethod
                 def has_access_essentials(metacls, bases):
                     AccessEssentials = api_self.AccessEssentials 
-                    for base in bases:
+                    for base in bases:                       
                         if metacls.acts_access_essentials(base):
                             return True
                     return False
@@ -1636,7 +1907,7 @@ def create_api():
                     meta_bases = tuple(meta_bases)
                     InsecureRestrictor = api_self.InsecureRestrictor
                     meta_dct = dict(InsecureRestrictor.__dict__)
-                    meta_dct["__new__"] = InsecureRestrictor.__new__ # some not-so-fun time has been spent here
+                    meta_dct["__new__"] = InsecureRestrictor.__new__
                     InsecureRestrictor = type("InsecureRestrictor", meta_bases, meta_dct)
                     return InsecureRestrictor
 
@@ -1648,7 +1919,10 @@ def create_api():
                                    "private_bases",
                                    "protected_bases",
                                    "base_protecteds",
-                                   "base_publics"]
+                                   "base_publics",
+                                   "base_privates",
+                                   "_subclasses_",
+                                   "objs"]
                     for list_name in lists_names:
                         if list_name not in dct:
                             dct[list_name] = []
@@ -1678,9 +1952,11 @@ def create_api():
                                 dct["base_protecteds"].extend(base.base_protecteds)                           
                             if metacls.is_access_essentials(base):
                                 dct["_protecteds_"].extend(base._protecteds_)                           
-                        if hasattr(base, "base_publics"):
                             dct["base_publics"].extend(base.base_publics)                        
                         names = list(base.__dict__.keys())
+                        for name in list(names):
+                            if isinstance(base.__dict__[name], AccessError):
+                                names.remove(name)                    
                         dct["base_publics"].extend(names)
                         if hasattr(base, "protected_bases"):
                             dct["protected_bases"].extend(base.protected_bases)
@@ -1688,57 +1964,79 @@ def create_api():
                     dct["base_publics"] = list(set(dct["base_publics"]))
                 
                 @classmethod
-                def set_name_rules(metacls, bases, dct):                                        
+                def set_name_rules(metacls, bases, dct):
                     for member_name, member in dct.items():
                         valid_ids = ["access_modifiers.PrivateValue",
                                      "access_modifiers.ProtectedValue",
                                      "access_modifiers.PublicValue"]
                         no_modifier = not hasattr(type(member), "class_id") or type(member).class_id not in valid_ids
+                        no_modifier2 = member_name not in dct["_privates_"] and member_name not in dct["_protecteds_"] and member_name not in dct["_publics_"]
                         special_names = ["_privates_",
                                        "_protecteds_",
                                        "_publics_",
                                        "_new_",
+                                       "_getattribute_",
+                                       "_setattr_",
+                                       "_delattr_",
                                        "private_bases",
                                        "protected_bases",
                                        "base_protecteds",
-                                       "base_publics"]                        
-                        if no_modifier and member_name not in special_names and dct["_publics_"] == []:
-                            dct[member_name] = api_self.default(member)
-                    metacls.extract_values(dct, "_privates_", api_self.PrivateValue)
+                                       "base_privates",
+                                       "base_publics"]
+                        if no_modifier and no_modifier2 and member_name not in special_names:
+                            dct[member_name] = api_self.default(member)                            
+                    metacls.extract_values(dct, "_privates_", api_self.PrivateValue)                    
                     metacls.extract_values(dct, "_protecteds_", api_self.ProtectedValue)
                     metacls.extract_values(dct, "_publics_", api_self.PublicValue)
                     metacls.extract_modifier(dct, api_self.PrivateModifier, "_privates_")
                     metacls.extract_modifier(dct, api_self.ProtectedModifier, "_protecteds_")
-                    metacls.extract_modifier(dct, api_self.PublicModifier, "_publics_")                          
-                    metacls.apply_base_rules(bases, dct)                                          
-                    _privates_ = dct["_privates_"] + dct["_protecteds_"] + api_self.AccessEssentials._privates_
-                    _privates_ += ["__dict__",
-                                   "__bases__",
-                                   "_bases",
-                                   "__mro__",
-                                   "_mro",
-                                   "last_class",
-                                   "private_bases",
-                                   "protected_bases"]
+                    metacls.extract_modifier(dct, api_self.PublicModifier, "_publics_")                    
+                    metacls.apply_base_rules(bases, dct)                    
+                    if "__new__" in dct["_privates_"]:
+                        dct["_privates_"].append("_new_")
+                    if "__new__" in dct["_protecteds_"]:
+                        dct["_protecteds_"].append("_new_")
+                    if "__new__" in dct["_publics_"]:
+                        dct["_publics_"].append("_new_")
+                    if "__new__" not in dct["_privates_"] and "__new__" not in dct["_protecteds_"] and "__new__" not in dct["_publics_"]:                        
+                        dct["_publics_"].append("__new__")                        
+                    dct["_privates_"] = dct["_privates_"] + dct["_protecteds_"] + api_self.AccessEssentials._privates_
+                    dct["_privates_"] += ["__dict__",
+                                          "__bases__",
+                                          "_bases",
+                                          "__mro__",
+                                          "_mro",
+                                          "last_class",
+                                          "private_bases",
+                                          "protected_bases"]
+                    for member_name in dct:
+                        if (member_name in dct["_privates_"] or member_name in dct["_protecteds_"]) and member_name in dct["_publics_"]:
+                            dct["_publics_"].remove(member_name)                    
                     dct["_protecteds_"] = list(set(dct["_protecteds_"]))                
-                    dct["_privates_"] = list(set(_privates_))
+                    dct["_privates_"] = list(set(dct["_privates_"]))
                     dct["_publics_"] = list(set(dct["_publics_"]))  
 
                 @classmethod
                 def set_accessors(metacls, dct):
                     if "__getattribute__" in dct:
                         dct["_getattribute_"] = dct["__getattribute__"]
-                        dct["__getattribute__"] = object.__getattribute__
+                        if "class_id" not in dct or dct["class_id"] != "access_modifiers.ProtectedGate":
+                            del dct["__getattribute__"]
                     if "__setattr__" in dct:
                         dct["_setattr_"] = dct["__setattr__"]
-                        dct["__setattr__"] = object.__setattr__
+                        if "class_id" not in dct or dct["class_id"] != "access_modifiers.ProtectedGate":
+                            del dct["__setattr__"]
                     if "__delattr__" in dct:
                         dct["_delattr_"] = dct["__delattr__"]
-                        dct["__delattr__"] = object.__delattr__                                          
+                        if "class_id" not in dct or dct["class_id"] != "access_modifiers.ProtectedGate":
+                            del dct["__delattr__"]
 
                 @classmethod
                 def get_new(metacls):
                     def __new__(cls, *args, **kwargs):
+                        if hasattr(cls, "secure_class"):
+                            cls = cls.secure_class.own_hidden_values["cls"]
+                            
                         new_dict = dict(cls.__dict__)
                         del new_dict["static_dict"]
                         if "__getattribute__" in cls.static_dict:
@@ -1754,34 +2052,89 @@ def create_api():
                         if "__classcell__" in cls.static_dict:
                             new_dict["__classcell__"] = cls.static_dict["__classcell__"]
 
-                        new_cls = api_self.InsecureRestrictor(cls.__name__, cls.__bases__, new_dict)
+                        new_cls = api_self.InsecureRestrictor(cls.__name__, cls.__bases__, new_dict)                        
                         
                         if "__new__" in new_cls._privates_ and "__new__" not in new_cls._protecteds_:
-                            raise PrivateError(sys._getframe(1).f_code.co_name, "__new__", new_cls.__name__)
+                            caller = sys._getframe(1).f_code
+                            raise PrivateError(caller.co_name, "__new__", new_cls.__name__, caller = caller)
                         elif "_new_" in new_cls._privates_ and "_new_" not in new_cls._protecteds_:
-                            raise PrivateError(sys._getframe(1).f_code.co_name, "_new_", new_cls.__name__)
+                            caller = sys._getframe(1).f_code
+                            raise PrivateError(caller.co_name, "__new__", new_cls.__name__, caller = caller)
                         elif "__new__" in new_cls._protecteds_:
-                            raise ProtectedError(sys._getframe(1).f_code.co_name, "__new__", new_cls.__name__)
+                            caller = sys._getframe(1).f_code
+                            raise ProtectedError(caller.co_name, "__new__", new_cls.__name__, caller = caller)
                         elif "_new_" in new_cls._protecteds_:
-                            raise ProtectedError(sys._getframe(1).f_code.co_name, "_new_", new_cls.__name__)                                
+                            caller = sys._getframe(1).f_code
+                            raise ProtectedError(caller.co_name, "__new__", new_cls.__name__, caller = caller)
 
-                        new_obj = new_cls._new_(new_cls)                
+                        try:
+                            new_cls._new_
+                        except PrivateError as e:
+                            e.caller = sys._getframe(1).f_code
+                            e.caller_name = sys._getframe(1).f_code.co_name
+                            e.member_name = "__new__"
+                        inherited_new = False
+                        for base in new_cls.__bases__:
+                            if hasattr(base, "_new_") and base._new_ == new_cls._new_:
+                                inherited_new = True                               
+                                break
+                        if inherited_new:
+                            for base in new_cls.__mro__:
+                                if hasattr(base, "_privates_") and "__new__" in (base._privates_ or base.base_privates) and "__new__" not in base._protecteds_:
+                                    caller = sys._getframe(1).f_code
+                                    raise PrivateError(caller.co_name, "__new__", base.__name__, inherited = True, caller = caller)
+                                elif hasattr(base, "_privates_") and "__new__" in base._protecteds_:
+                                    caller = sys._getframe(1).f_code
+                                    raise ProtectedError(caller.co_name, "__new__", cls.__name__, caller = caller)
+                                elif hasattr(base, "_privates_") and "__new__" in base.base_protecteds:
+                                    for grand_parent in base.__bases__:
+                                        if hasattr(grand_parent, "_privates_") and ("__new__" in grand_parent._protecteds_ or "__new__" in grand_parent.base_protecteds):
+                                            break
+                                    else:
+                                        if "__new__" not in base._publics_:                                            
+                                            caller = sys._getframe(1).f_code
+                                            raise ProtectedError(caller.co_name, "__new__", cls.__name__, caller = caller)
+                                if hasattr(base, "_new_") and base._new_ != object.__new__:
+                                    for grand_parent in base.__bases__:
+                                        try:
+                                            if hasattr(grand_parent, "_new_") and grand_parent._new_ == base._new_:                              
+                                                break
+                                        except PrivateError:
+                                            pass
+                                    else:
+                                        break
+
+                        new_obj = new_cls._new_(new_cls)
+                        new_cls.objs.append(new_obj)
                         if type(new_obj) == new_cls:
+                            new_obj.pre_init()                            
                             if "__init__" in new_cls._privates_ and "__init__" not in new_cls._protecteds_:
-                                raise PrivateError(sys._getframe(1).f_code.co_name, "__init__", new_cls.__name__)
+                                caller = sys._getframe(1).f_code
+                                raise PrivateError(caller.co_name, "__init__", new_cls.__name__, caller = caller)
                             elif "__init__" in new_cls._protecteds_:
-                                raise ProtectedError(sys._getframe(1).f_code.co_name, "__init__", new_cls.__name__)                                
-                            
-                            new_obj.pre_init()
-                                                           
+                                caller = sys._getframe(1).f_code
+                                raise ProtectedError(caller.co_name, "__init__", new_cls.__name__, caller = caller)                                                    
                             __init__ = new_obj.__init__
                             if not api_self.is_function(__init__):
                                 for base in new_cls.__mro__:
+                                    if hasattr(base, "_privates_") and "__init__" in (base._privates_ or base.base_privates) and "__init__" not in base._protecteds_:
+                                        caller = sys._getframe(1).f_code
+                                        raise PrivateError(caller.co_name, "__init__", base.__name__, inherited = True, caller = caller)
+                                    elif hasattr(base, "_privates_") and "__init__" in base._protecteds_:
+                                        caller = sys._getframe(1).f_code
+                                        raise ProtectedError(caller.co_name, "__init__", cls.__name__, caller = caller)
+                                    elif hasattr(base, "_privates_") and "__init__" in base.base_protecteds:
+                                        for grand_parent in base.__bases__:
+                                            if hasattr(grand_parent, "_privates_") and ("__init__" in grand_parent._protecteds_ or "__init__" in grand_parent.base_protecteds):
+                                                break
+                                        else:
+                                            if "__init__" not in base._publics_:
+                                                caller = sys._getframe(1).f_code
+                                                raise ProtectedError(caller.co_name, "__init__", cls.__name__, caller = caller)
                                     if api_self.is_function(base.__init__):
                                         __init__ = base.__init__
-                                        new_cls.__init__ = __init__
                                         __init__ = types.MethodType(__init__, new_obj)                                        
-                                        break
+                                        break                                    
                             new_obj.private.redirect_access = True
                             __init__(*args, **kwargs)                            
                         return new_obj
@@ -1791,20 +2144,25 @@ def create_api():
                 def set_new(metacls, dct, bases):
                     if "__new__" in dct:
                         dct["_new_"] = dct["__new__"]
-                    elif "_new_" not in dct:                           
-                        mro = metacls.get_mro(bases)
-                        for base in mro:
+                        if "_new_" not in dct["_privates_"] and "_new_" not in dct["_protecteds_"] and "_new_" not in dct["_publics_"]:                        
+                            dct["_publics_"].append("_new_")                                                
+                    elif "_new_" not in dct:
+                        for base in bases:
+                            try:
+                                hasattr(base, "_new_")
+                            except PrivateError:
+                                break
                             if hasattr(base, "_new_"):
-                                if base._new_ != object.__new__:                                    
-                                    dct["_new_"] = base._new_
+                                if base._new_ != object.__new__:
                                     break
                             elif hasattr(base, "__new__"):
                                 if base.__new__ != object.__new__:
-                                    dct["_new_"] = base.__new__
                                     break
                         else:                            
-                            dct["_new_"] = object.__new__                            
-                    dct["__new__"] = metacls.get_new()                
+                            dct["_new_"] = object.__new__
+                            if "_new_" not in dct["_privates_"] and "_new_" not in dct["_protecteds_"] and "_new_" not in dct["_publics_"]:                        
+                                dct["_publics_"].append("_new_")                            
+                    dct["__new__"] = metacls.get_new()
 
                 @classmethod
                 def get_stub_class(metacls, stub_cache, cls):
@@ -1833,10 +2191,10 @@ def create_api():
                     return tuple(mro)                  
                 
                 @classmethod
-                def create_class(metacls, name, bases, dct):                    
-                    metacls.init_dct(dct)
+                def create_class(metacls, name, bases, dct):
+                    metacls.init_dct(dct)                    
                     metacls.set_name_rules(bases, dct)                    
-                    dct["static_dict"] = dict(dct)                
+                    dct["static_dict"] = dict(dct)
                     metacls.set_accessors(dct)
                     metacls.set_new(dct, bases)
                     dct["_bases"] = bases
@@ -1847,30 +2205,32 @@ def create_api():
                 @classmethod
                 def update_subclasses(metacls, bases, cls):
                     for base in bases:
-                        not_wrapper_descriptor = hasattr(type(base).__getattribute__, "__code__")
-                        if not_wrapper_descriptor:
-                            if type(base).__getattribute__.__code__ == api_self.create_object_proxy_meta(0).__getattribute__.__code__:                                
-                                base = type(base).__getattribute__.__closure__[0].cell_contents.cls
-                                base._subclasses_.append(cls)
+                        try:
+                            base = type.__getattribute__(base, "protected_gate")
+                        except AttributeError:
+                            continue
+                        else:
+                            base = base.cls.own_hidden_values["cls"]
+                            base._subclasses_.append(cls)
                     
                 def __new__(metacls, name, bases, dct):                    
-                    bases = api_self.make_real_bases(bases)
-                    bases = metacls.add_access_essentials(bases)                    
+                    bases = api_self.make_real_bases(bases)                    
+                    bases = metacls.add_access_essentials(bases)
                     if metacls.has_conflicts(bases):
                         InsecureRestrictor = metacls.resolve_conflicts(bases)
                         return InsecureRestrictor(name, bases, dct)
                     else:
                         cls = metacls.create_class(name, bases, dct)
-                        metacls.update_subclasses(bases, cls)
+                        metacls.update_subclasses(cls.__mro__, cls)
                         return cls              
 
                 @property
                 def __bases__(cls):
-                    return cls._bases
+                    return type.__getattribute__(cls, "_bases")
 
                 @property
                 def __mro__(cls):
-                    return cls._mro
+                    return type.__getattribute__(cls, "_mro")
                 
                 def should_redirect(cls, name):
                     try:
@@ -1883,47 +2243,148 @@ def create_api():
                     maybe_redirect = has_redirect_access and redirect_access == True
                     return maybe_redirect and name != "__class__" and name != "own_redirect_access"
                     
-                def get_unbound_base_attr(cls, name, bases = None, return_base = False):                    
+                def get_unbound_base_attr(cls, name, bases = None, return_base = False):
                     if bases is None:
-                        bases = type.__getattribute__(cls, "__bases__")
+                        bases = type.__getattribute__(cls, "__mro__")
+                    found = False                    
                     for base in bases:                        
                         try:
-                            value = type(base).__getattribute__(base, name)
+                            raw_base = type.__getattribute__(base, "protected_gate")
                         except AttributeError:
+                            raw_base = base                            
+                        else:                            
+                            raw_base = raw_base.cls.own_hidden_values["cls"]
+                        try:                            
+                            value = type.__getattribute__(raw_base, name)                            
+                            delattr(raw_base, name)
+                        except AttributeError:
+                            try:
+                                type(base).__getattribute__(base, name)                                
+                            except AttributeError:
+                                continue                                
+                            except PrivateError as e:                            
+                                e.caller_name = sys._getframe(1).f_code.co_name
+                                cls.last_class = base
+                                e.class_name = e.base_name
+                                raise                        
                             continue
-                        except PrivateError as e:
+                        except TypeError:
+                            pass
+                        else:
+                            setattr(raw_base, name, value)
+                            
+                        try:                            
+                            value = type(base).__getattribute__(base, name)                            
+                            found = True                            
+                        except AttributeError:                                                       
+                            continue
+                        except PrivateError as e:                            
                             e.caller_name = sys._getframe(1).f_code.co_name
                             cls.last_class = base
                             e.class_name = e.base_name
                             raise
-                        else:
-                            if not return_base:
+                        else:                            
+                            is_builtin_new = name == "_new_" and value == object.__new__
+                            is_builtin_new2 = name == "__new__" and value == object.__new__
+                            is_builtin = type(value) == types.WrapperDescriptorType
+                            if is_builtin_new or is_builtin_new2 or is_builtin:
+                                continue
+                            if not return_base:                                
                                 return value
                             else:
                                 return value, base
+                            
+                    if not found and not cls.has_own_attr(name):
+                        try:
+                            value = type.__getattribute__(cls, name)
+                        except AttributeError:
+                            pass
+                        else:
+                            found = True
+                            base = api_self.AccessEssentials
+                            
+                    if found and not return_base:
+                        return value
+                    elif found:
+                        return value, base
                     raise AttributeError(name)
 
                 def has_own_attr(cls, name):
                     try:
-                        type.__getattribute__(cls, name)
+                        value = type.__getattribute__(cls, name)
+                        delattr(cls, name)
                     except AttributeError:
                         return False
+                    except TypeError: # name is "__name__"
+                        return True
                     else:
+                        setattr(cls, name, value)
                         return True
 
-                def is_public(cls, name):
-                    has_public = cls.has_own_attr(name)
+                def is_public(cls, name):                    
+                    subclass = cls
+                    has_public = cls.has_own_attr(name)                    
                     if not has_public:
                         try:
                             _, cls = cls.get_unbound_base_attr(name, return_base = True)
-                        except PrivateError:
+                        except PrivateError:                            
                             return False
-                    if name in cls._privates_:
+                    is_private = hasattr(cls, "_publics_") and name not in cls._publics_ and name != "__name__" and name in cls.base_privates
+                    if hasattr(cls, "_privates_") and (name in cls._privates_ or name in cls._protecteds_ or is_private):                        
                         return False
-                    elif not has_public and name in cls.base_protecteds:
+                    is_private = hasattr(subclass, "_publics_") and name not in subclass._publics_ and name != "__name__" and  name in subclass.base_privates
+                    if is_private:                        
                         return False
-                    else:
-                        return True
+                    for base in subclass.__mro__:
+                        if base == cls:
+                            break                        
+                        if hasattr(base, "base_protecteds") and name in base.base_protecteds:
+                            return False
+                    return True
+
+                def is_protected(cls, name):
+                    if name in cls._protecteds_ or name in cls.base_protecteds:
+                        protected_holder = None                                        
+                        private_holder = None
+                        base_privates_holder = None
+                        check_protected = True
+                        check_private = True
+                        check_base_privates = True
+                        mro = cls.__mro__
+                        mro = list(mro)
+                        mro.insert(0, cls)
+                        mro = tuple(mro)                                            
+                        for base in mro:
+                            will_check = check_protected or check_private or check_base_privates
+                            if will_check and hasattr(base, "_privates_"):
+                                if check_protected and name in base._protecteds_:
+                                    check_protected = False
+                                    protected_holder = base
+                                if check_private and name in base._privates_:
+                                    check_private = False
+                                    private_holder = base
+                                if check_base_privates and name in base.base_privates:
+                                    check_base_privates = False
+                                    base_privates_holder = base
+                        if protected_holder is None:
+                            return True
+                        if base_privates_holder is not None:
+                            for base in base_privates_holder.private_bases:
+                                if hasattr(base, name):
+                                    break
+                            mro2 = []
+                            for base2 in mro:
+                                try:
+                                    mro2.append(type.__getattribute__(base2, "protected_gate").cls)
+                                except AttributeError:
+                                    mro2.append(base2)
+                            if mro2.index(base) <= mro.index(protected_holder):
+                                return False
+                        if private_holder is not None and mro.index(private_holder) < mro.index(protected_holder):                                                
+                            return False
+                        else:
+                            return True
+                    return False                                         
                     
                 def __getattribute__(cls, name):
                     should_redirect = type.__getattribute__(cls, "should_redirect")
@@ -1931,23 +2392,37 @@ def create_api():
                         cls = type.__getattribute__(cls, "proxy")
                         try:                            
                             return getattr(cls, name)
-                        except PrivateError as e:
-                            inherited = hasattr(e, "inherited") and e.inherited == True
-                            raise PrivateError(sys._getframe(1).f_code.co_name, name, cls.__name__, class_attr = True, inherited = inherited)
+                        except AccessError as e:
+                            e.caller_name = sys._getframe(1).f_code.co_name
+                            raise
                     else:                        
                         if name == "own_redirect_access":
-                            name = "redirect_access"
+                            name = "redirect_access"                            
                         try:                                                 
-                            return type.__getattribute__(cls, name)
+                            value = type.__getattribute__(cls, name)                            
                         except AttributeError as e:
                             get_unbound_base_attr = type.__getattribute__(cls, "get_unbound_base_attr")
                             try:                                
                                 return get_unbound_base_attr(name)
-                            except AttributeError:
+                            except AttributeError:                                
                                 raise e
-                            except PrivateError as e:
+                            except PrivateError as e:                                
                                 e.caller_name = sys._getframe(1).f_code.co_name
                                 raise
+                        else:
+                            is_builtin_new = name == "_new_" and value == object.__new__
+                            is_builtin_new2 = name == "__new__" and value == object.__new__
+                            is_builtin = type(value) == types.WrapperDescriptorType
+                            if is_builtin_new or is_builtin_new2 or is_builtin:
+                                get_unbound_base_attr = type.__getattribute__(cls, "get_unbound_base_attr")
+                                try:
+                                    value = get_unbound_base_attr(name)                                    
+                                except AttributeError:
+                                    pass
+                                except PrivateError as e:                                
+                                    e.caller_name = sys._getframe(1).f_code.co_name
+                                    raise                                
+                            return value                            
 
                 def modify_attr(cls, name, delete = False, value = None):
                     should_redirect = type.__getattribute__(cls, "should_redirect")                   
@@ -1974,14 +2449,20 @@ def create_api():
                                  "secure_class"]                            
                         if not delete:
                             type.__setattr__(cls, name, value)
-                            if hasattr(cls, "secure_class") and name not in names:
-                                setattr(cls.secure_class, name, value)
+                            if name not in names:
+                                if hasattr(cls, "secure_class"):
+                                    type.__setattr__(cls.secure_class.own_hidden_values["cls"], name, value)
+                                for obj in cls.objs:                                    
+                                    type.__setattr__(type(obj), name, value)
                         else:
-                            if hasattr(cls, "secure_class") and name not in names:
-                                delattr(cls.secure_class, name)
-                            else:
-                                type.__delattr__(cls, name)
-                    
+                            type.__delattr__(cls, name)
+                            if name not in names:
+                                if hasattr(cls, "secure_class") and cls != cls.secure_class.own_hidden_values["cls"]:
+                                    type.__delattr__(cls.secure_class.own_hidden_values["cls"], name)
+                                for obj in cls.objs:                                    
+                                    if type(obj) != cls:
+                                        type.__delattr__(type(obj), name)
+                                                    
                 def __setattr__(cls, name, value):
                     modify_attr = type.__getattribute__(cls, "modify_attr")
                     modify_attr(name, value = value)                                        
@@ -1996,72 +2477,70 @@ def create_api():
         @property
         def SecureClass(api_self):
             class SecureClass(metaclass = api_self.InsecureRestrictor):
+                class_id = "access_modifiers.SecureClass"
+                
                 def __init__(self, cls):
-                    get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
-                    @no_redirect(get_private("hidden_values"))
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("hidden_values"))                    
                     def __init__(self, cls):
                         private = self.private
-                        private.raw_objs = []
                         private.cls = cls
                         private._privates_ = cls._privates_
                         private._protecteds_ = cls._protecteds_
                         private.base_publics = cls.base_publics
                         private.base_protecteds = cls.base_protecteds
-                        all_names = dir(self.cls) + self._protecteds_ + self.base_publics + self.base_protecteds
-                        all_names = list(set(all_names))
-                        cls = self.cls
-                        authorize = self.authorize
+                        private.base_privates = cls.base_privates
+                        all_names = dir(self.cls)
                         is_function = api_self.is_function
                         for member_name in all_names:                        
                             try:
-                                member = getattr(cls, member_name)
-                            except AttributeError:                
-                                continue
-                            except PrivateError:
-                                continue                
+                                member = type.__getattribute__(self.cls, member_name)
+                            except AttributeError:
+                                continue             
                             if is_function(member):
-                                authorize(member)
-                        authorize(api_self.InsecureRestrictor.modify_attr)
-                        authorize(api_self.InsecureRestrictor.update_subclasses)
+                                self.authorize(member)                                
+                        self.authorize(api_self.InsecureRestrictor.modify_attr)
+                        self.authorize(api_self.InsecureRestrictor.update_subclasses)
+                        self.authorize(api_self.InsecureRestrictor.get_unbound_base_attr)
+                        self.authorize(api_self.InsecureRestrictor.is_protected)
+                        self.authorize(api_self.InsecureRestrictor.is_public)
+                        self.cls.secure_class = self
+                        self.cls._publics_.append("secure_class")
 
                         private.raise_PrivateError2 = self.raise_PrivateError2
                         private.raise_ProtectedError2 = self.raise_ProtectedError2
                         private.is_ro_method = self.is_ro_method
-                        private.is_meta_method = self.is_meta_method
                         private.create_secure_method = self.create_secure_method
-                        private.control_access = self.control_access
+                        private.is_subclass_method2 = self.is_subclass_method2                        
+                        private.control_access = self.control_access                        
                         
                     __init__(self, cls)
 
                 def __call__(self, *args, **kwargs):
                     get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
-                    @no_redirect(get_private("hidden_values"))
-                    def __call__(self, *args, **kwargs):                        
-                        self.cls.secure_class = self                        
-                        try:
-                            obj = self.cls(*args, **kwargs)
-                        except AccessError as e:
-                            e.caller_name = sys._getframe(3).f_code.co_name
-                            raise
-                        object.__setattr__(obj, "_class_", self)
-                        self.raw_objs.append(obj)
-                        modifier_backup = api_self.default
-                        api_self.set_default(api_self.public)                                        
-                        SecureInstance = api_self.SecureInstance
-                        api_self.set_default(modifier_backup)
-                        SecureInstance.proxy = self            
-                        obj = SecureInstance(obj)
-                        api_self.Restrictor.remove_base_leaks(obj)
-                        type(obj).redirect_access = True                        
-                        return obj
-
-                    return __call__(self, *args, **kwargs)
+                    hidden_values = get_private("hidden_values")                                                                  
+                    try:
+                        obj = self.own_hidden_values["cls"](*args, **kwargs)
+                    except AccessError as e:
+                        if hasattr(e, "caller") and e.caller == type(self).__call__.__code__:
+                            e.caller = sys._getframe(1).f_code
+                            e.caller_name = sys._getframe(1).f_code.co_name
+                        raise
+                    object.__setattr__(obj, "_class_", self)                        
+                    modifier_backup = api_self.default
+                    api_self.set_default(api_self.public)                                        
+                    SecureInstance = api_self.SecureInstance
+                    api_self.set_default(modifier_backup)
+                    SecureInstance.proxy = self            
+                    obj = SecureInstance(obj)
+                    api_self.Restrictor.remove_base_leaks(obj)                        
+                    type(obj).redirect_access = True
+                    return obj
 
                 def public_super(self):
-                    get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
                     @no_redirect(get_private("hidden_values"))
                     def public_super(self):
                         class super:
@@ -2073,9 +2552,9 @@ def create_api():
                             def __getattribute__(self, name):
                                 secure_class = object.__getattribute__(self, "secure_class")
                                 get_private = object.__getattribute__(secure_class, "get_private")
-                                no_redirect = get_private("no_redirect")
-                                @no_redirect(get_private("hidden_values"))
-                                def __getattribute__(self, name):
+                                no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, secure_class)
+                                @no_redirect(get_private("hidden_values"))                    
+                                def __getattribute__(self, name):                                    
                                     secure_class = object.__getattribute__(self, "secure_class")                               
                                     try:
                                         value, base = secure_class.cls.get_unbound_base_attr(name, return_base = True)
@@ -2089,9 +2568,10 @@ def create_api():
                                             e.caller_name = sys._getframe(3).f_code.co_name
                                             raise
                                     else:
-                                        pg = type.__getattribute__(base, "protected_gate")                                            
+                                        pg = type.__getattribute__(base, "protected_gate")                                        
                                     if hasattr(base, "_privates_"):
-                                        is_private = name in base._privates_
+                                        is_base_private = name in base.base_privates and name not in base._publics_
+                                        is_private = hasattr(base, "_privates_") and (name in base._privates_ or is_base_private or name in base._protecteds_)
                                         inherited = False
                                         if not is_private and not base.has_own_attr(name):
                                             inherited = True
@@ -2112,9 +2592,9 @@ def create_api():
 
                             def __str__(self):
                                 secure_class = object.__getattribute__(self, "secure_class")
-                                get_private = object.__getattribute__(secure_class, "get_private")
-                                no_redirect = get_private("no_redirect")
-                                @no_redirect(get_private("hidden_values"))
+                                get_private = object.__getattribute__(secure_class, "get_private")                                
+                                no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, secure_class)
+                                @no_redirect(get_private("hidden_values"))  
                                 def __str__(self):
                                     secure_class = object.__getattribute__(self, "secure_class")
                                     super = __builtins__["super"]
@@ -2143,13 +2623,6 @@ def create_api():
                             return True
                     return False
 
-                def is_meta_method(self, name, value):
-                    if hasattr(self.InsecureRestrictor, name):
-                        function = getattr(self.InsecureRestrictor, name)
-                        if api_self.is_function(value) and value.__code__ == function.__code__:
-                            return True
-                    return False
-
                 def create_secure_method(self, method):
                     hidden_method = self.get_hidden_value(self.hidden_values, method)
                     def secure_method(*args, **kwargs):
@@ -2161,28 +2634,115 @@ def create_api():
                             raise                       
                     self.authorize(secure_method)
                     return secure_method
+
+                def is_subclass_method2(self, cls, depth = 1):
+                    def get_all_subclasses(cls):
+                        """We have to duplicate this function for performance reasons"""
+                        all_subclasses = []
+                        for subclass in type.__getattribute__(cls, "__subclasses__")():
+                            all_subclasses.append(subclass)
+                            all_subclasses.extend(get_all_subclasses(subclass))
+                        all_subclasses = list(set(all_subclasses))
+                        return all_subclasses
+
+                    def get_all_subclasses2(cls):
+                        """We have to duplicate this function for performance reasons"""
+                        all_subclasses = []
+                        for subclass in cls._subclasses_:
+                            all_subclasses.append(subclass)
+                        all_subclasses = list(set(all_subclasses))
+                        return all_subclasses
+                    
+                    def is_function(func):
+                        """We have to duplicate this function for performance reasons"""
+                        try:
+                            code = object.__getattribute__(func, "__code__")
+                        except AttributeError:
+                            has_code = type(func) == types.MethodType
+                        else:
+                            has_code = True
+                        if callable(func) and has_code and type(func.__code__) == types.CodeType:
+                            return True
+                        else:
+                            return False
+                        
+                    depth += 1          
+                    caller = sys._getframe(depth).f_code
+                    subclasses = get_all_subclasses(cls)                  
+                    for subclass in subclasses:
+                        for member in subclass.__dict__.values():
+                            if is_function(member) and member.__code__ == caller:
+                                return True, subclass.cls.own_hidden_values["cls"]
+                    subclasses = get_all_subclasses2(cls)
+                    for subclass in subclasses:
+                        try:
+                            type.__getattribute__(subclass, caller.co_name)
+                        except AttributeError:
+                            pass
+                        else:
+                            member = getattr(subclass, caller.co_name)
+                            if is_function(member) and type(member) != types.MethodType and member.__code__ == caller:                                
+                                return True, subclass
+                            if hasattr(subclass, "_new_"):
+                                member = subclass._new_
+                                if is_function(member) and member.__code__ == caller:
+                                    return True, subclass
+                    return False, None                
                     
                 def _getattribute_(self, name):
+                    def no_redirect(self, hidden_values):
+                        """We have to duplicate this function for performance reasons"""
+                        def factory(func):
+                            def redirection_stopper(*args, **kwargs):
+                                obj_will_redirect = "redirect_access" in hidden_values and hidden_values["redirect_access"] == True
+                                try:
+                                    cls_will_redirect = type.__getattribute__(type(self), "redirect_access")
+                                except AttributeError:
+                                    cls_will_redirect = False
+                                if obj_will_redirect:
+                                    hidden_values["redirect_access"] = False                                          
+                                if cls_will_redirect:
+                                    type(self).own_redirect_access = False
+                                try:
+                                    return func(*args, **kwargs)
+                                finally:
+                                    if obj_will_redirect:
+                                        hidden_values["redirect_access"] = True                                          
+                                    if cls_will_redirect:
+                                        type(self).own_redirect_access = True
+
+                            redirection_stopper.func = func
+                            hidden_values["auth_codes"].add(func.__code__)
+                            hidden_values["auth_codes"].add(redirection_stopper.__code__)
+                            return redirection_stopper                    
+                        return factory                    
+                    
                     get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
-                    @no_redirect(get_private("hidden_values"))
+                    no_redirect = types.MethodType(no_redirect, self)
+                    hidden_values = get_private("hidden_values")
+                    @no_redirect(hidden_values)
                     def _getattribute_(self, name):
-                        hidden_values = self.hidden_values
+                        def is_ro_method(self, name, value):
+                            """We have to duplicate this method for performance reasons"""
+                            if hasattr(super(), name):
+                                function = getattr(super(), name)
+                                if api_self.is_function(value) and api_self.is_function(function) and value.__code__ == function.__code__:
+                                    return True
+                            return False
+                        
                         wrapped_cls = hidden_values["cls"]
-                        _privates_ = hidden_values["_privates_"]                        
-                        base_protecteds = hidden_values["base_protecteds"]
-                        check_caller = self.check_caller
-                        is_subclass_method = self.is_subclass_method
-                        _protecteds_ = hidden_values["_protecteds_"]
+                        _privates_ = wrapped_cls._privates_                       
+                        base_protecteds = wrapped_cls.base_protecteds
+                        base_privates = wrapped_cls.base_privates
+                        check_caller = types.MethodType(hidden_values["AccessEssentials2"].check_caller, self)
+                        is_subclass_method = types.MethodType(hidden_values["AccessEssentials2"].is_subclass_method, self)
+                        _protecteds_ = wrapped_cls._protecteds_
                         raise_PrivateError2 = hidden_values["raise_PrivateError2"]
                         raise_ProtectedError2 = hidden_values["raise_ProtectedError2"]
                         create_secure_method = hidden_values["create_secure_method"]
+                        is_subclass_method2 = hidden_values["is_subclass_method2"]
                         InsecureRestrictor = hidden_values["InsecureRestrictor"]
-                        is_ro_method = hidden_values["is_ro_method"]
-                        AccessEssentials = hidden_values["AccessEssentials"]
                         Api = hidden_values["Api"]
-                        if name == "__getattribute__":
-                            raise PrivateError("__getattribute__ method is disallowed")                        
                         def is_meta_method(self, hidden_values, name, value):
                             """We have to duplicate this function for performance reasons.
                             __getattribute__ calls are big overheads"""                            
@@ -2192,20 +2752,17 @@ def create_api():
                                 if same_function:
                                     return True
                             return False
-                                                
+                        
                         try:                        
                             value = getattr(wrapped_cls, name)
                         except PrivateError as e:
                             e.caller_name = sys._getframe(5).f_code.co_name
                             e.inherited = True
                             raise
-
-                        real_caller = sys._getframe(7).f_code
-                        internal_callers = [InsecureRestrictor.set_new.__code__, InsecureRestrictor.get_new().__code__]
-                        if real_caller in internal_callers:
-                            return value
+                            
                         public_names = ["_privates_",
                                         "_protecteds_",
+                                        "_publics_",
                                         "__bases__",
                                         "__mro__",
                                         "_bases",
@@ -2213,29 +2770,49 @@ def create_api():
                                         "__dict__",
                                         "base_publics",
                                         "base_protecteds",
-                                        "protected_bases"]
-                        is_private = name in _privates_
-                        inherited = False
-                        if not is_private:
-                            try:
-                                type.__getattribute__(self.cls, name)
-                            except AttributeError:
-                                is_private = name in base_protecteds
-                                inherited = True
-
+                                        "base_privates",
+                                        "protected_bases",
+                                        "private_bases"]
+                        is_private = name in _privates_ or (not wrapped_cls.is_public(name) and not wrapped_cls.is_protected(name))
                         authorized_caller = check_caller(hidden_values, depth = 5, name = name)
-                        has_protected_access = is_subclass_method(depth = 5)                                
+                        has_protected_access = is_subclass_method(hidden_values, depth = 5)
+
+                        ism, subclass = is_subclass_method2(wrapped_cls, depth = 5)
+                        only_private = name in _privates_ and name not in _protecteds_
+                        only_private = only_private or name in base_privates
+                        if not only_private:
+                            hidden_values["redirect_access"] = True
+                            type(self).own_redirect_access = True
+                            try:
+                                if subclass is not None:
+                                    for base in subclass.__mro__:
+                                        if hasattr(base, "base_privates") and name in base.base_privates:
+                                            raise PrivateError(sys._getframe(5).f_code.co_name, name, base.__name__, class_attr = True, inherited = True)
+                            finally:
+                                hidden_values["redirect_access"] = False
+                                type(self).own_redirect_access = False
+                        
+                        inherited = False
+                        if not is_private and not wrapped_cls.is_public(name):
+                            is_private = name in base_protecteds
+                            inherited = True
+
                         if is_private and name not in public_names and name not in _protecteds_ and not inherited and not authorized_caller:
                             raise_PrivateError2(name, depth = 5)
-                        elif is_meta_method(self, hidden_values, name, value) and name != "has_own_attr":
+                        elif is_meta_method(self, hidden_values, name, value) and name != "has_own_attr" and not authorized_caller:
                             raise PrivateError(sys._getframe(5).f_code.co_name, name, type(self.cls).__name__)
                         elif is_private and name not in public_names and not authorized_caller:
                             raise_ProtectedError2(name, depth = 5)
-                        elif name == "protected_bases" and not has_protected_access:
-                            raise_ProtectedError2(name, depth = 5)
-                        elif is_meta_method(self, hidden_values, name, value):
+                        elif is_meta_method(self, hidden_values, name, value) and not authorized_caller:
                             value = create_secure_method(value)
-                        elif name in ["_privates_", "_protecteds_", "_publics_", "base_publics", "base_protecteds", "protected_bases"]:
+                        elif name in ["_privates_",
+                                      "_protecteds_",
+                                      "_publics_",
+                                      "base_publics",
+                                      "base_protecteds",
+                                      "base_privates",
+                                      "protected_bases",
+                                      "private_bases"]:
                             value = list(value)
                         elif name in ["__bases__", "__mro__", "_bases", "_mro"]:
                             is_access_essentials = InsecureRestrictor.is_access_essentials
@@ -2245,35 +2822,42 @@ def create_api():
                             for key in value:
                                 if key in _protecteds_:
                                     new_dict[key] = ProtectedError("protected member")
-                                elif key in self._privates_:
+                                elif key in wrapped_cls._privates_:
                                     new_dict[key] = PrivateError("private member")                                    
                             value = new_dict
-                        elif is_ro_method(name, value):
-                            value = getattr(AccessEssentials, name)
+                        elif is_ro_method(self, name, value):
+                            value = getattr(hidden_values["AccessEssentials3"], name)
                         return value
                     
                     return _getattribute_(self, name)
 
-                def control_access(self, name):
+                def control_access(self, name):                    
                     if name in ["get_private", "__getattribute__", "__setattr__", "__delattr__"]:
-                        raise PrivateError(f"Modifying {name} is disallowed")
+                        raise PrivateError(f"Modifying {name} is disallowed")                    
                     hidden_values = self.own_hidden_values
-                    authorized_caller = self.check_caller(self.hidden_values, depth = 6, name = name)
-                    if name in self._privates_ and not authorized_caller and name not in self._protecteds_:
+                    check_caller = types.MethodType(hidden_values["AccessEssentials2"].check_caller, self)
+                    is_meta_method = types.MethodType(hidden_values["AccessEssentials2"].is_meta_method, self)                    
+                    authorized_caller = check_caller(hidden_values, depth = 6, name = name)
+                    try:
+                        value = getattr(self.cls, name)                        
+                    except PrivateError:
+                        defined = False
+                    except AttributeError:
+                        defined = False
+                    else:
+                        defined = True
+                    if name in self.cls._privates_ and name not in self.cls._protecteds_ and not authorized_caller:
                         self.raise_PrivateError2(name, depth = 6)
-                    elif name in self._privates_ and not authorized_caller:
+                    elif defined and is_meta_method(name, value) and not authorized_caller:
+                        raise PrivateError(sys._getframe(6).f_code.co_name, name, type(self.cls).__name__)
+                    elif name in self.cls._privates_ and not authorized_caller:
                         self.raise_ProtectedError2(name, depth = 6)
-                    elif name in self._privates_:
-                        try:
-                            value = getattr(self.cls, name)
-                        except PrivateError:
-                            return
-                        if self.is_ro_method(name, value):                        
-                            raise PrivateError("methods inherited from AccessEssentials are read only") # prevents subclasses to bypass private members of their bases             
+                    elif defined and self.is_ro_method(name, value):
+                        raise PrivateError("methods inherited from AccessEssentials are read only")             
                     
                 def _setattr_(self, name, value):
-                    get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
                     @no_redirect(get_private("hidden_values"))
                     def _setattr_(self, name, value):
                         self.control_access(name)                       
@@ -2281,22 +2865,23 @@ def create_api():
                             untrusted_func = value
                             def trusted_method(itself, *args, **kwargs):
                                 self = object.__getattribute__(itself, "_self_")
+                                del itself # if we don't delete it, untrusted_func can look at the call stack and obtain the raw object
                                 return untrusted_func(self, *args, **kwargs)
                             value = trusted_method
                         type.__setattr__(self.cls, name, value)
-                        for obj in self.raw_objs:
+                        for obj in self.cls.objs:
                             type.__setattr__(type(obj), name, value)
                         
                     _setattr_(self, name, value)                        
 
                 def _delattr_(self, name):
-                    get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
                     @no_redirect(get_private("hidden_values"))
                     def _delattr_(self, name):
                         self.control_access(name)                     
                         type.__delattr__(self.cls, name)
-                        for obj in self.raw_objs:
+                        for obj in self.cls.objs:
                             type.__delattr__(type(obj), name)
                     _delattr_(self, name)
 
@@ -2307,9 +2892,9 @@ def create_api():
         def SecureInstance(api_self):
             class SecureInstance(metaclass = api_self.InsecureRestrictor):
                 def __init__(self, inst):
-                    get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
-                    @no_redirect(get_private("hidden_values"))
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("hidden_values"))                    
                     def __init__(self, inst):
                         self.private.inst = inst
                         self.private.raise_PrivateError2 = self.raise_PrivateError2
@@ -2319,14 +2904,14 @@ def create_api():
                         modifier_backup = api_self.default
                         api_self.set_default(api_self.public)                                        
                         inst._self_ = self
-                        api_self.set_default(modifier_backup)                                                
+                        api_self.set_default(modifier_backup)
 
                     __init__(self, inst)
 
                 def public_super(self):
-                    get_private = object.__getattribute__(self, "get_private")
-                    no_redirect = get_private("no_redirect")
-                    @no_redirect(get_private("hidden_values"))
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("hidden_values"))                    
                     def public_super(self):
                         class super:
                             __slots__ = ["secure_instance"]
@@ -2336,9 +2921,9 @@ def create_api():
                                 
                             def __getattribute__(self, name):
                                 secure_instance = object.__getattribute__(self, "secure_instance")
-                                get_private = object.__getattribute__(secure_instance, "get_private")
-                                no_redirect = get_private("no_redirect")
-                                @no_redirect(get_private("hidden_values"))
+                                get_private = object.__getattribute__(secure_instance, "get_private")                                
+                                no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, secure_instance)
+                                @no_redirect(get_private("hidden_values"))                    
                                 def __getattribute__(self, name):
                                     secure_instance = object.__getattribute__(self, "secure_instance")
                                     cls = type(secure_instance.inst)                                                                   
@@ -2360,7 +2945,8 @@ def create_api():
                                         pg = type.__getattribute__(base, "protected_gate")    
                                     inherited = False
                                     if hasattr(base, "_privates_"):
-                                        is_private = name in base._privates_                                        
+                                        is_base_private = name in base.base_privates and name not in base._publics_
+                                        is_private = hasattr(base, "_privates_") and (name in base._privates_ or is_base_private or name in base._protecteds_)                                  
                                         if not is_private and not base.has_own_attr(name):
                                             inherited = True
                                             is_private = name in base.base_protecteds
@@ -2383,9 +2969,9 @@ def create_api():
 
                             def __str__(self):
                                 secure_instance = object.__getattribute__(self, "secure_instance")
-                                get_private = object.__getattribute__(secure_instance, "get_private")
-                                no_redirect = get_private("no_redirect")
-                                @no_redirect(get_private("hidden_values"))
+                                get_private = object.__getattribute__(secure_instance, "get_private")                                
+                                no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, secure_instance)
+                                @no_redirect(get_private("hidden_values"))                    
                                 def __str__(self):
                                     secure_instance = object.__getattribute__(self, "secure_instance")
                                     super = __builtins__["super"]
@@ -2438,40 +3024,18 @@ def create_api():
                     if cls_will_redirect:
                         type(self).own_redirect_access = False
                     try:
-                        if name == "__getattribute__":
-                            raise PrivateError("__getattribute__ method is disallowed")                        
-                        if hasattr(type(self.inst), "_getattribute_"):                            
-                            getattribute = type(self.inst)._getattribute_
-                        else:
-                            getattribute = getattr
                         try:                            
-                            value = getattribute(self.inst, name)                            
+                            value = getattr(self.inst, name) 
                         except PrivateError as e:
                             e.caller_name = sys._getframe(3).f_code.co_name
                             raise
                         except ProtectedError:                           
                             self.raise_ProtectedError2(name, depth = 3)                            
-                        except AttributeError as e:
+                        except AttributeError as e:                            
                             try:
                                 value = self.get_class_attr(name)
                             except AttributeError:
                                 raise e
-                        try:
-                            delattr(self.inst, name)
-                        except AttributeError:
-                            generated_codes = [self.__getattribute__.__code__,
-                                               self.__setattr__.__code__,
-                                               self.__delattr__.__code__,
-                                               self.create_getattribute().__code__,
-                                               self.create_setattr().__code__,
-                                               self.create_delattr().__code__,
-                                               self.get_private.__code__]
-                            if not api_self.is_function(value) or value.__code__ not in generated_codes:
-                                value = self.get_class_attr(name)
-                        except AccessError:
-                            pass
-                        else:
-                            object.__setattr__(self.inst, name, value)                        
                         if type(value) == types.MethodType:
                             value = self.create_secure_method(value)
                         return value
@@ -2494,13 +3058,9 @@ def create_api():
                         hidden_values["redirect_access"] = False                                          
                     if cls_will_redirect:
                         type(self).own_redirect_access = False
-                    try:                                            
-                        if hasattr(type(self.inst), "_setattr_"):
-                            setter = type(self.inst)._setattr_                            
-                        else:
-                            setter = setattr                        
+                    try:                      
                         try:
-                            setter(self.inst, name, value)
+                            setattr(self.inst, name, value)
                         except PrivateError:
                             self.raise_PrivateError2(name, depth = 3)
                         except ProtectedError:                           
@@ -2524,13 +3084,9 @@ def create_api():
                         hidden_values["redirect_access"] = False                                          
                     if cls_will_redirect:
                         type(self).own_redirect_access = False
-                    try:
-                        if hasattr(type(self.inst), "_delattr_"):
-                            deleter = type(self.inst)._delattr_
-                        else:
-                            deleter = delattr                        
+                    try:                        
                         try:
-                            deleter(self.inst, name)
+                            delattr(self.inst, name)
                         except PrivateError:
                             self.raise_PrivateError2(name, depth = 3)
                         except ProtectedError:                           
@@ -2606,7 +3162,6 @@ def create_api():
                         if default_name not in dct:
                             dct[default_name] = []                        
                         dct[default_name].extend(default_dct[default_name])
-                        dct[default_name] = list(set(dct[default_name]))
                     return original_new(metacls, name, bases, dct)
                 
                 meta_dct["__new__"] = __new__
@@ -2617,7 +3172,7 @@ def create_api():
         @property
         def extract_values(api_self):
             def extract_values(bases, dct, member_group):                
-                if member_group == "_privates_":
+                if member_group == "base_privates":
                     value_type = api_self.PrivateValue
                     base_group = "private_bases"
                 elif member_group == "base_protecteds":
@@ -2625,29 +3180,40 @@ def create_api():
                     base_group = "protected_bases"
                 else:
                     value_type = api_self.PublicValue                    
-                new_bases = []
+                new_bases = []                
                 for base in bases:                    
                     both_has = hasattr(type(base), "class_id") and hasattr(value_type, "class_id")                    
                     if both_has and type(base).class_id == value_type.class_id:
                         base = base.value
-                        if member_group == "_privates_" or member_group == "base_protecteds":
+                        if member_group == "base_privates" or member_group == "base_protecteds":
                             names = []
                             if hasattr(base, "_protecteds_"):
                                 names.extend(base._protecteds_)
                             if hasattr(base, "base_protecteds"):
                                 names.extend(base.base_protecteds)                            
                             if hasattr(base, "base_publics"):
-                                names.extend(base.base_publics)
-                            base_publics = list(base.__dict__.keys())
-                            base_publics.remove("__new__")
-                            if base.__dict__["_new_"] == object.__new__:
+                                bb_publics = list(base.base_publics)
+                                if base._new_ == object.__new__ and "_new_" in bb_publics:
+                                    bb_publics.remove("_new_")
+                                    bb_publics.remove("__new__")
+                                names.extend(bb_publics)
+                            base_publics = list(base.__dict__.keys())                            
+                            if hasattr(base, "_new_") and base._new_ == object.__new__:
                                 base_publics.remove("_new_")
-                            names.extend(base_publics)                            
+                                base_publics.remove("__new__")
+                            for name in list(base_publics):
+                                if isinstance(base.__dict__[name], AccessError):
+                                    base_publics.remove(name)
+                            names.extend(base_publics)
+                            if member_group == "base_privates":
+                                for protected_name in api_self.AccessEssentials._protecteds_:
+                                    while protected_name in names:                                      
+                                        names.remove(protected_name)
                             for name in names:                        
                                 dct[member_group].append(name)
                             dct[base_group].append(base)
                     new_bases.append(base)
-                if member_group == "_privates_" or member_group == "base_protecteds":
+                if member_group == "base_privates" or member_group == "base_protecteds":
                     dct[member_group] = list(set(dct[member_group]))
                 return new_bases
 
@@ -2657,14 +3223,14 @@ def create_api():
         @property
         def create_restrictor(api_self):
             def create_restrictor(*bases, insecure = False):
-                default_dct = {"_privates_": [], "base_protecteds": [], "private_bases": [], "protected_bases": []}                
-                bases = api_self.extract_values(bases, default_dct, "_privates_")                
+                default_dct = {"base_privates": [], "base_protecteds": [], "private_bases": [], "protected_bases": []}
+                bases = api_self.extract_values(bases, default_dct, "base_privates")                
                 bases = api_self.extract_values(bases, default_dct, "base_protecteds")
-                bases = api_self.extract_values(bases, default_dct, "publics")                
+                bases = api_self.extract_values(bases, default_dct, "publics")
                 modifier_backup = api_self.default
                 api_self.set_default(api_self.public)                
                 bases = api_self.make_real_bases(bases)
-                api_self.set_default(modifier_backup)                
+                api_self.set_default(modifier_backup)
                 if not insecure:                    
                     Restrictor = api_self.Restrictor                
                     InsecureRestrictor = Restrictor.__bases__[0]
@@ -2700,6 +3266,7 @@ raw_api = create_api()()
 class SecureApi(metaclass = raw_api.Restrictor):
     """api represents the whole library. If you monkeypatch it, that means you are no longer using this library."""
     def create_secure_closure(self, func):
+        """prevents access to raw api using functions' __closure__ attribute"""
         @property
         def secure_closure(api_self):
             return func(self)
@@ -2714,20 +3281,19 @@ class SecureApi(metaclass = raw_api.Restrictor):
             if isinstance(member, property):
                 member = member.fget
                 secure_closure = create_secure_closure(member)
-                setattr(Api, member_name, secure_closure)
+                setattr(Api, member_name, secure_closure)                
             if not member_name.startswith("__"):
-                self.set_private(member_name, member)
+                self.set_private(member_name, member)                
                 
         self.set_private("api", Api())
         self.set_private("redirect_access", True)
 
     def _getattribute_(self, name):
         get_private = object.__getattribute__(self, "get_private")
-        value = getattr(get_private("api"), name)        
+        value = getattr(get_private("api"), name)
         return value
 
 api = SecureApi()
 
-
 if __name__ == "__main__":
-    import tests
+    import tests        

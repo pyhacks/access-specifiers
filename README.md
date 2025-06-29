@@ -1,5 +1,5 @@
 # access-modifiers
-This library provides runtime access modifiers with high security. The project is a proof of concept and the library is too slow to be used in production code. Currently installing from pip is not supported.
+This library provides runtime access modifiers with high security. Currently installing from pip is not supported.
 
 The recommended way to import the library is like below:
 ```python

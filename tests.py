@@ -49,7 +49,7 @@ class Test(access_specifiers.Restricted):
         self.protected.c = 45        
         self.public.qwert = 50
         self.qwert = 60
-        self.fghd = 65
+        self.fghd = 65        
 
     @access_specifiers.Decorator(classmethod)
     @access_specifiers.Decorator(factory2)
@@ -66,7 +66,13 @@ class Test(access_specifiers.Restricted):
 
     @access_specifiers.private
     def private3(self):
-        print("private3 called")    
+        print("private3 called")
+
+    def after_test4(self):
+        def func10():
+            print(self.hjk)
+        self.authorize(func10)
+        func10()
 
     def func(self):
         Test4.test4_func2(self)
@@ -162,12 +168,13 @@ class Test4(metaclass = access_specifiers.create_restrictor(Test9, Test2, Test3)
         Test.abc
         self.protected2
         self.__init__()
+        self.set_private("hjk", 899)
         
     def test4_func2(self):
         #print(self.protected2)
         pass
     
-    
+
 class Test6(access_specifiers.Restricted):
     var2 = access_specifiers.protected(345)
     var3 = access_specifiers.protected(574)
@@ -321,6 +328,7 @@ def test():
     c = Test4()
     c.func()
     c.test4_func()
+    c.after_test4()
 
     d = Test5()
     d.my_func3()    

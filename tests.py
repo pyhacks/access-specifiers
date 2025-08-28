@@ -1,24 +1,38 @@
 import sys
 import time
-from access_modifiers import api as access_modifiers
+from access_specifiers import api as access_specifiers
 
-private = access_modifiers.PrivateModifier
-protected = access_modifiers.ProtectedModifier
-public = access_modifiers.PublicModifier
+private = access_specifiers.PrivateModifier
+protected = access_specifiers.ProtectedModifier
+public = access_specifiers.PublicModifier
 
-access_modifiers.set_default(access_modifiers.public)
+access_specifiers.set_default(access_specifiers.public)
 
 
-class Test(access_modifiers.Restricted):
-    abc = access_modifiers.protected(30)
+def factory1(func):
+    def wrapper(*args, **kwargs):
+        print("here1")
+        func(*args, **kwargs)
+    return wrapper
+
+
+def factory2(func):
+    def wrapper(*args, **kwargs):
+        print("here2")
+        func(*args, **kwargs)
+    return wrapper
+    
+        
+class Test(access_specifiers.Restricted):
+    abc = access_specifiers.protected(30)
     public .my_var = 15
 
-    @access_modifiers.public
+    @access_specifiers.public
     def __new__(cls):
         print("in __new__")
         return object.__new__(cls)
 
-    @access_modifiers.public
+    @access_specifiers.public
     def __init__(self):
         self.set_private("a", 10)         
         hidden_values = self.get_private("hidden_values")
@@ -32,30 +46,30 @@ class Test(access_modifiers.Restricted):
         self.private2()
         self.set_protected("protected1", 23)        
         self.private.c = 46
-        self.protected.c = 45
+        self.protected.c = 45        
         self.public.qwert = 50
         self.qwert = 60
         self.fghd = 65
 
-    def public1(self):
-        print("public method called")
+    @access_specifiers.Decorator(classmethod)
+    @access_specifiers.Decorator(factory2)
+    @access_specifiers.Decorator(factory1)
+    def public1(cls):
+        print(cls)
+        print("public method called")        
 
-    @access_modifiers.private
+    @access_specifiers.private
     def private1(self):
         self.a
         self.get_private("a")
         print("private method called")
 
-    @access_modifiers.private
+    @access_specifiers.private
     def private3(self):
         print("private3 called")    
 
-    def func(self):        
-        SecureInstance = access_modifiers.SecureInstance
-        SecureInstance.proxy = type(self).secure_class
-        obj = SecureInstance(self)
-        #obj = self
-        Test4.test4_func2(obj)
+    def func(self):
+        Test4.test4_func2(self)
         self.private1()
 
     def common_test(self):
@@ -66,6 +80,7 @@ class Test(access_modifiers.Restricted):
         self.authorize(A)
         A().common(self)
         A().common(obj)
+        A().common(Test())
 
     def set_b(self):
         type(self).b = 938
@@ -89,17 +104,13 @@ class Test(access_modifiers.Restricted):
     def authorize2(self, func):
         self.authorize(func)
 
-    @access_modifiers.protected
+    @access_specifiers.protected
     def protected2(self):
         pass
 
     def __getattribute__(self, name):
-        self.own_hidden_values["redirect_access"] = False
-        getter = self.create_getattribute()
-        try:
-            value = getter(name) # may raise AttributeError           
-        finally:
-            self.own_hidden_values["redirect_access"] = True
+        getter = self.create_getattribute()                
+        value = getter(name)
         return value
 
     def __setattr__(self, name, value):
@@ -110,24 +121,24 @@ class Test(access_modifiers.Restricted):
         deleter = self.create_delattr()
         deleter(name)
 
-        
-class Test2(access_modifiers.Restricted):
-    #var3 = access_modifiers.protected(374)
+
+class Test2(access_specifiers.Restricted):
+    #var3 = access_specifiers.protected(374)
     
-    @access_modifiers.protected
+    @access_specifiers.protected
     def func1(self):
         print("hello in Test2")
 
-    @access_modifiers.private
+    @access_specifiers.private
     def func2(self):
         pass
 
-    @access_modifiers.private
+    @access_specifiers.private
     def func4(self):
         pass
 
 
-class Test3(metaclass = access_modifiers.create_restrictor(Test)):
+class Test3(metaclass = access_specifiers.create_restrictor(Test)):
     pass
 
 
@@ -135,21 +146,19 @@ class Test9:
     ghj = 563
 
 
-class Test4(metaclass = access_modifiers.create_restrictor(Test9, Test2, Test3)):
+class Test4(metaclass = access_specifiers.create_restrictor(Test9, Test2, Test3)):
     _protecteds_ = ["var1"]
     var1 = 7
     private .var2 = 8
     abc = 43
 
-    #def __new__(cls):
-    #    return object.__new__(cls)
+    @access_specifiers.public
+    def __new__(cls):
+        return object.__new__(cls)
     
-    @access_modifiers.public
+    @access_specifiers.public
     def test4_func(self):
         #self.check_caller.__func__.__code__ = create_bypass().__code__
-        self.set_private("a", 15)
-        self.a
-        self.a = 15
         Test.abc
         self.protected2
         self.__init__()
@@ -157,24 +166,15 @@ class Test4(metaclass = access_modifiers.create_restrictor(Test9, Test2, Test3))
     def test4_func2(self):
         #print(self.protected2)
         pass
-
-    def __getattribute__(self, name):
-        self.own_hidden_values["redirect_access"] = False
-        getter = self.create_getattribute()
-        try:
-            value = getter(name) # may raise AttributeError           
-        finally:
-            self.own_hidden_values["redirect_access"] = True
-        return value
     
     
-class Test6(access_modifiers.Restricted):
-    var2 = access_modifiers.protected(345)
-    var3 = access_modifiers.protected(574)
+class Test6(access_specifiers.Restricted):
+    var2 = access_specifiers.protected(345)
+    var3 = access_specifiers.protected(574)
     var4 = 11
     private .var5 = 12
     
-    @access_modifiers.private
+    @access_specifiers.private
     def func2(self, obj):
         print(obj.var2)
         
@@ -189,12 +189,14 @@ class Test6(access_modifiers.Restricted):
     #    print("in Test6.__init__")
 
 
-class Test7(metaclass = access_modifiers.create_restrictor(Test2, access_modifiers.private(Test3), access_modifiers.private(Test6), access_modifiers.private(Test9))):
+class Test7(metaclass = access_specifiers.create_restrictor(Test2, access_specifiers.private(Test3), access_specifiers.private(Test6), access_specifiers.private(Test9))):
     def __new__(cls):        
         return object.__new__(cls)
 
     def __init__(self):
+        access_specifiers.super().__init__()
         pass
+    pass
 
 
 class Test8():
@@ -203,7 +205,7 @@ class Test8():
         print(self.var2)        
 
 
-class Test5(Test8, metaclass = access_modifiers.create_restrictor(Test2, Test7)):
+class Test5(Test8, metaclass = access_specifiers.create_restrictor(Test2, Test7)):
     _privates_ = ["var1"]
     _protecteds_ = ["var2"]
     var1 = 21
@@ -220,47 +222,47 @@ class Test5(Test8, metaclass = access_modifiers.create_restrictor(Test2, Test7))
         real_Test6.func1(real_Test6(), self)
         Test8.func3(self)
 
-    def my_func3(self):        
+    def my_func3(self):
         try:
             self.public1
-        except access_modifiers.PrivateError:
+        except access_specifiers.PrivateError:
             pass
         else:
             raise RuntimeError("expected PrivateError")
 
         try:
             Test6.var4
-        except access_modifiers.PrivateError:
+        except access_specifiers.PrivateError:
             pass
         else:
             raise RuntimeError("expected PrivateError")
         
         try:
             self.func2
-        except access_modifiers.PrivateError:
+        except access_specifiers.PrivateError:
             pass
         else:
             raise RuntimeError("expected PrivateError")
 
 
-class Test14(access_modifiers.Restricted):
+class Test14(access_specifiers.Restricted):
     def test14_func(self):
         try:
             print(self.func4)
-        except access_modifiers.PrivateError:
+        except access_specifiers.PrivateError:
             pass
         else:
             raise RuntimeError("expected PrivateError")
 
 
-class Test10(metaclass = access_modifiers.create_restrictor(Test14, Test5)):
+class Test10(metaclass = access_specifiers.create_restrictor(Test14, Test5)):
     pass
+    
 
-
-class Test11(access_modifiers.HalfRestricted):
+class Test11(access_specifiers.HalfRestricted):
     def __init__(self):
         print("in Test11")
-        self.set_private("a", 238)
+        self.set_protected("a", 238)
 
 
 class Test12:
@@ -268,30 +270,30 @@ class Test12:
         print(obj.a)
 
 
-class Test13(metaclass = access_modifiers.create_restrictor(Test11)):
+class Test13(metaclass = access_specifiers.create_restrictor(Test11)):
     def func(self):
         print(self.a)
 
 
-class Class0(access_modifiers.Restricted):
+class Class0(access_specifiers.Restricted):
     def MethodA(self):
         print("MethodA of Class0")
     
 
-class ClassA(metaclass = access_modifiers.create_restrictor(Class0)):
-    def MethodA(self):
-        self.super().MethodA()
+class ClassA(metaclass = access_specifiers.create_restrictor(Class0)):
+    def MethodA(self):        
+        access_specifiers.super().MethodA()
         print("MethodA of ClassA")
     
 
-class ClassB(metaclass = access_modifiers.create_restrictor(Class0)):
+class ClassB(metaclass = access_specifiers.create_restrictor(Class0)):
     def MethodA(self):
         print("MethodA of ClassB")
 
 
-class ClassC(metaclass = access_modifiers.create_restrictor(ClassA, ClassB)):
+class ClassC(metaclass = access_specifiers.create_restrictor(ClassA, ClassB)):
     def MethodA(self):
-        self.super().MethodA()
+        access_specifiers.super().MethodA()
             
 
 def create_bypass():
@@ -299,11 +301,13 @@ def create_bypass():
     b = 20
     def bypass(self, *args, **kwargs):
         a
-        #b
+        b
+        print("hello")
         return True
     return bypass
+
     
-def test():    
+def test():
     for base in ClassC.__mro__:
         print(base.__name__)
     ClassC().MethodA()
@@ -319,7 +323,7 @@ def test():
     c.test4_func()
 
     d = Test5()
-    d.my_func3()
+    d.my_func3()    
 
     e = Test10()
     e.my_func3()
@@ -332,7 +336,7 @@ def test():
 def test2():
     print("finished")
 
-    from access_modifiers import calls    
+    from access_specifiers import calls    
 
     times = []
     for frame in calls:
@@ -356,10 +360,12 @@ def test2():
                 single_calls[frame.f_code.co_name] = calls[frame][2]
             else:
                 single_calls[frame.f_code.co_name] += calls[frame][2]
-            if frame.f_code.co_name == "set_private":
+            if frame.f_code.co_name == "getter2":
                 #print(frame, calls[frame][1])
+                #if len(calls[frame][1]) == 3:
+                #    print(frame.f_back.f_back.f_back, calls[frame][4])
                 #if frame.f_back.f_back.f_code.co_name == "get_unbound_base_attr":
-                #    print(frame.f_back.f_back.f_back.f_back, calls[frame][4])
+                #    print(frame.f_back.f_back.f_back.f_back.f_back.f_back.f_back.f_back.f_back, calls[frame][4])
                 pass
     for name in sorted(single_calls, key = single_calls.get, reverse = True):
         print(name, single_calls[name])

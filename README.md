@@ -1,6 +1,9 @@
 # access-specifiers
 This library provides runtime access modifiers with very high security and it is fully featured (e.g, supports private inheritance).
 
+# Installation
+```pip install access-specifiers```
+
 The recommended way to import the library is like below:
 ```python
 from access_specifiers import api as access_specifiers

@@ -66,7 +66,7 @@ class MyClass(access_specifiers.Restricted):
 The dot (.) in between the modifier and the name is required.
 
 You can also set new members with access modifiers after creating the class. 
-Classes inheriting _Restricted_ stores _ClassModifier_ objects. You can use them as modifiers:
+Classes inheriting _Restricted_ store _ClassModifier_ objects. You can use them as modifiers:
 ```python
 class MyClass(access_specifiers.Restricted):
     @classmethod

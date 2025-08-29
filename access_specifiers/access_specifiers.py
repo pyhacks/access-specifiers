@@ -2592,7 +2592,6 @@ def create_api():
                         else:
                             raise PrivateError(f"\"{caller.co_name}\" is not authorized to use this function")
                         if cls is not None and cls != cls2 and cls not in cls2._subclasses_:
-                            print(api_self.is_same_class(cls, cls2))
                             raise PrivateError(sys._getframe(2).f_code.co_name, name, cls.__name__)
                         elif cls is None:
                             cls = cls2
@@ -5489,4 +5488,3 @@ class SecureApi(metaclass = raw_api.Restrictor):
         return value
 
 api = SecureApi()      
-

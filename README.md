@@ -165,7 +165,6 @@ _method_ Restricted.**authorize**(func_or_cls, for_all = True)
 This function acts like the "friend" keyword of c++. Allows _func_or_cls_ to have as much member access right as any other method of this class. 
 _func_or_cls_ can either be a function or a class. 
 If _for_all_ is set, allows _func_or_cls_ to access private/protected members of not only this object, but also every other instantiated object of this class and also all future objects of this class which will be instantiated later and even the class itself.
-This function only works when called from inside the class.
 
 _method_ Restricted.**get_hidden_value**(value, name = None)
 

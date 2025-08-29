@@ -5488,7 +5488,5 @@ class SecureApi(metaclass = raw_api.Restrictor):
             value = getattr(get_private("api"), name)
         return value
 
-api = SecureApi()
+api = SecureApi()      
 
-if __name__ == "__main__":
-    import tests        

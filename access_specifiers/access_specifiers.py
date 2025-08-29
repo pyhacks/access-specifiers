@@ -1244,6 +1244,26 @@ def create_api():
                                         raise                                
                             return value                                          
 
+                        def is_function(func):
+                            """We have to duplicate this function for performance reasons"""
+                            try:
+                                code = object.__getattribute__(func, "__code__")
+                            except AttributeError:
+                                has_code = type(func) == types.MethodType
+                            else:
+                                has_code = True
+                            if callable(func) and has_code and type(func.__code__) == types.CodeType:
+                                return True
+                            else:
+                                return False
+
+                        def is_meta_method(self, name, value):
+                            if hasattr(all_hidden_values[AccessEssentials]["InsecureRestrictor"], name):
+                                function = getattr(all_hidden_values[AccessEssentials]["InsecureRestrictor"], name)
+                                if is_function(value) and value.__code__ == function.__code__:
+                                    return True
+                            return False                
+
                         def force_get_attr(bases, name):
                             """We have to duplicate this function because it can't be a part of the library api.
                             Otherwise that would cause a loophole"""
@@ -1264,8 +1284,11 @@ def create_api():
                                 else:
                                     if api_self.is_function(value) and type(value) != types.MethodType:
                                         value = types.MethodType(value, self)
-                                    elif type(value) == types.MethodType:
+                                    elif is_meta_method(self, name, value):                                            
                                         continue
+                                    elif type(value) == types.MethodType:
+                                        value = value.__func__
+                                        value = types.MethodType(value, type(self))
                                     return value                                    
                             raise AttributeError(name)                                          
                             
@@ -1510,8 +1533,11 @@ def create_api():
                                     else:
                                         if api_self.is_function(value) and type(value) != types.MethodType:
                                             value = types.MethodType(value, self)
-                                        elif type(value) == types.MethodType:                                            
-                                            continue                                        
+                                        elif is_meta_method(self, name, value):                                            
+                                            continue
+                                        elif type(value) == types.MethodType:
+                                            value = value.__func__
+                                            value = types.MethodType(value, type(self))
                                         return value                                    
                                 raise AttributeError(name)
 
@@ -3833,12 +3859,16 @@ def create_api():
                         except AttributeError as e:
                             get_unbound_base_attr = type.__getattribute__(cls, "get_unbound_base_attr")
                             try:                                
-                                return get_unbound_base_attr(name)
+                                value = get_unbound_base_attr(name)
                             except AttributeError:                                
                                 raise e
                             except PrivateError as e:                                
                                 e.caller_name = sys._getframe(1).f_code.co_name
                                 raise
+                            if type(value) == types.MethodType:
+                                value = value.__func__
+                                value = types.MethodType(value, cls)
+                            return value
                         else:
                             if deleted:
                                 type.__setattr__(cls, name, value)
@@ -5046,7 +5076,7 @@ def create_api():
                         if method.__self__ is self.inst:
                             method = method.__func__
                             method = types.MethodType(method, self)
-                        return method                      
+                            return method                      
                     hidden_method = self.internal_get_hidden_value(all_hidden_values, method)
                     hidden_inst_all_hidden_values = self.internal_get_hidden_value(all_hidden_values, self.inst.own_all_hidden_values)
                     def secure_method(*args, **kwargs):
@@ -5458,4 +5488,7 @@ class SecureApi(metaclass = raw_api.Restrictor):
             value = getattr(get_private("api"), name)
         return value
 
-api = SecureApi()       
+api = SecureApi()
+
+if __name__ == "__main__":
+    import tests        

@@ -49,7 +49,7 @@ class Test(access_specifiers.Restricted):
         self.protected.c = 45        
         self.public.qwert = 50
         self.qwert = 60
-        self.fghd = 65        
+        self.fghd = 65
 
     @access_specifiers.Decorator(classmethod)
     @access_specifiers.Decorator(factory2)

@@ -155,14 +155,6 @@ If _cls_ is specified it must be a class and the call to these functions will be
 _cls_ can either be the same as of the caller or it must be more derived than of the caller. 
 If it is a parent of the caller's class, an access_specifiers.PrivateError will be raised.
 
-_method_ Restrictor.**set_class_private**(name, value)
-
-_method_ Restrictor.**set_class_protected**(name, value)
-
-_method_ Restrictor.**set_class_public**(name, value)
-
-These methods are defined in _Restrictor_, which means they are only available to classes, not to the objects.
-
 _method_ Restricted.**authorize**(func_or_cls, for_all = True)
 
 This function acts like the "friend" keyword of c++. Allows _func_or_cls_ to have as much member access right as any other method of this class. 
@@ -237,6 +229,21 @@ Useful when you write a custom \_\_delattr__ and don't wanna manually check the 
         deleter(name)
 ```
 Note: default value of _depth_ is deliberately not 1. The reason for that is complicated and you don't need to know the details unless you call this function from somewhere else.
+
+Functions below are provided by _Restrictor_, which means they are only available to classes, not objects:
+
+_method_ Restrictor.**set_class_private**(name, value)
+
+_method_ Restrictor.**set_class_protected**(name, value)
+
+_method_ Restrictor.**set_class_public**(name, value)
+ 
+After the class has been created, these methods can be used to set private, protected and public class members which have dynamically generated names.
+
+_method_ Restrictor.**authorize_for_class**(func_or_cls)
+
+Authorize _func_or_cls_ so it can access private and protected class members. _func_or_cls_ can either be a function or a class. 
+_func_or_cls_ will also be authorized to access private and protected members of future objects, but not current ones.
 
 # Limitations
 - [gc.get_objects()](https://docs.python.org/3/library/gc.html#gc.get_objects) can leak private/protected members. In order to prevent this, you may consider adding this to the top of your code:

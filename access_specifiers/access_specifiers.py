@@ -487,6 +487,7 @@ def create_api():
                               "set_class_protected",
                               "set_class_private",
                               "modify_attr",
+                              "authorize_for_class",
                               "public",
                               "protected",
                               "private"]                                              
@@ -1113,7 +1114,8 @@ def create_api():
                     elif is_function(func_or_cls):
                         all_hidden_values[cls]["auth_codes"].add(func_or_cls.__code__)
                     else:
-                        for name, member in func_or_cls.__dict__.items():
+                        for name in dir(func_or_cls):
+                            member = getattr(func_or_cls, name)
                             try:
                                 isinstance(member, AccessError)
                             except RuntimeError:
@@ -1241,7 +1243,10 @@ def create_api():
                                         pass
                                     except PrivateError as e:
                                         e.caller_name = sys._getframe(1).f_code.co_name
-                                        raise                                
+                                        raise
+                                if type(value) == types.MethodType and value.__self__ == type(self) and not is_meta_method(self, name, value):                                
+                                    value = value.__func__
+                                    value = types.MethodType(value, type(self).secure_class)                                    
                             return value                                          
 
                         def is_function(func):
@@ -1288,7 +1293,7 @@ def create_api():
                                         continue
                                     elif type(value) == types.MethodType:
                                         value = value.__func__
-                                        value = types.MethodType(value, type(self))
+                                        value = types.MethodType(value, type(self).secure_class)
                                     return value                                    
                             raise AttributeError(name)                                          
                             
@@ -1511,6 +1516,10 @@ def create_api():
                                         except PrivateError as e:
                                             e.caller_name = sys._getframe(1).f_code.co_name
                                             raise
+                                    if type(value) == types.MethodType and value.__self__ == type(self) and not is_meta_method(self, name, value):                                
+                                        value = value.__func__
+                                        value = types.MethodType(value, type(self).secure_class)
+                                        
                                 return value
 
                             def force_get_attr(bases, name):
@@ -1537,7 +1546,7 @@ def create_api():
                                             continue
                                         elif type(value) == types.MethodType:
                                             value = value.__func__
-                                            value = types.MethodType(value, type(self))
+                                            value = types.MethodType(value, type(self).secure_class)
                                         return value                                    
                                 raise AttributeError(name)
 
@@ -3866,7 +3875,7 @@ def create_api():
                                 raise
                             if type(value) == types.MethodType:
                                 value = value.__func__
-                                value = types.MethodType(value, cls)
+                                value = types.MethodType(value, cls.secure_class)
                             return value
                         else:
                             if deleted:
@@ -3884,12 +3893,29 @@ def create_api():
                             if not is_protected_gate and (is_builtin_new or is_builtin_new2 or is_builtin):                                
                                 get_unbound_base_attr = type.__getattribute__(cls, "get_unbound_base_attr")
                                 try:
-                                    value = get_unbound_base_attr(name)                                    
+                                    value = get_unbound_base_attr(name)                                  
                                 except AttributeError:
                                     pass
                                 except PrivateError as e:                                
                                     e.caller_name = sys._getframe(1).f_code.co_name
-                                    raise                                        
+                                    raise
+                            try:
+                                secure_class = type.__getattribute__(cls, "secure_class")
+                            except AttributeError:
+                                has_secure_class = False
+                            else:
+                                has_secure_class = True
+                            if type(value) == types.MethodType and has_secure_class:                                
+                                def is_meta_method(cls, name, value):
+                                    if hasattr(type(cls), name):
+                                        function = getattr(type(cls), name)
+                                        if value.__code__ == function.__code__:
+                                            return True
+                                    return False                
+                                
+                                if not is_meta_method(cls, name, value):                                
+                                    value = value.__func__
+                                    value = types.MethodType(value, secure_class)
                             return value                            
 
                 def set_class_public(cls, name, value):
@@ -4095,6 +4121,11 @@ def create_api():
                     modify_attr = type.__getattribute__(cls, "modify_attr") 
                     modify_attr(name, delete = True)
 
+                def authorize_for_class(cls, func_or_cls):
+                    cls.secure_class.own_hidden_values["redirect_access"] = False
+                    cls.secure_class.authorize(func_or_cls)
+                    cls.secure_class.own_hidden_values["redirect_access"] = True
+
             return InsecureRestrictor
 
 
@@ -4154,6 +4185,7 @@ def create_api():
                         self.authorize(api_self.InsecureRestrictor.set_class_public)
                         self.authorize(api_self.InsecureRestrictor.set_class_protected)
                         self.authorize(api_self.InsecureRestrictor.set_class_private)
+                        self.authorize(api_self.InsecureRestrictor.authorize_for_class)                        
                         class A:
                             pass
                         super_ = api_self.super(api_self.SecureInstance(A()))
@@ -5075,7 +5107,7 @@ def create_api():
                         if method.__self__ is self.inst:
                             method = method.__func__
                             method = types.MethodType(method, self)
-                            return method                      
+                        return method                      
                     hidden_method = self.internal_get_hidden_value(all_hidden_values, method)
                     hidden_inst_all_hidden_values = self.internal_get_hidden_value(all_hidden_values, self.inst.own_all_hidden_values)
                     def secure_method(*args, **kwargs):
@@ -5147,7 +5179,7 @@ def create_api():
                         if cls_will_redirect:
                             type(self).own_redirect_access = True
                         try:                            
-                            value = getattr(get_private("hidden_values")["inst"], name)                            
+                            value = getattr(get_private("hidden_values")["inst"], name)
                         except AccessError as e:                            
                             e.caller_name = sys._getframe(3).f_code.co_name
                             raise
@@ -5298,6 +5330,10 @@ def create_api():
             def create_base(name = "Restricted", metaclass = api_self.Restrictor):
                 @classmethod
                 def get_real_class(cls):
+                    try:
+                        cls = cls.own_hidden_values["cls"]
+                    except AttributeError:
+                        pass
                     return cls
 
                 modifier_backup = api_self.default

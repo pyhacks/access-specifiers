@@ -4000,9 +4000,13 @@ def create_api():
                         try:
                             cls.own_redirect_access = False                            
                             if not delete:
-                                setattr(cls.proxy, name, value)
+                                def setter(cls, name, value):
+                                    setattr(cls.proxy, name, value)
+                                setter(cls, name, value)
                             else:
-                                delattr(cls.proxy, name)
+                                def deleter(cls, name):
+                                    delattr(cls.proxy, name)                                
+                                deleter(cls, name)
                         except PrivateError:
                             raise PrivateError(sys._getframe(2).f_code.co_name, name, cls.proxy.__name__, True)
                         finally:
@@ -4679,7 +4683,10 @@ def create_api():
                     return _getattribute_(self, name)
 
                 def control_access(self, name):                    
-                    if name in ["get_private", "__getattribute__", "__setattr__", "__delattr__"]:
+                    if name in ["get_private",
+                                "__getattribute__",
+                                "__setattr__",
+                                "__delattr__"]:
                         raise PrivateError(f"Modifying {name} is disallowed")                    
                     all_hidden_values = self.own_all_hidden_values
                     check_caller = types.MethodType(all_hidden_values[type(self)]["AccessEssentials2"].check_caller, self)

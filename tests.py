@@ -26,7 +26,7 @@ def factory2(func):
 class Test(access_specifiers.Restricted):
     abc = access_specifiers.protected(30)
     public .my_var = 15
-
+    
     @access_specifiers.public
     def __new__(cls):
         print("in __new__")
@@ -50,11 +50,17 @@ class Test(access_specifiers.Restricted):
         self.public.qwert = 50
         self.qwert = 60
         self.fghd = 65
+        self.get_class()
 
+    @access_specifiers.private
+    @access_specifiers.Decorator(classmethod)
+    def get_class(cls):
+        return cls
+    
     @access_specifiers.Decorator(classmethod)
     @access_specifiers.Decorator(factory2)
     @access_specifiers.Decorator(factory1)
-    def public1(cls):
+    def public1(cls):        
         print(cls)
         print("public method called")        
 

@@ -142,7 +142,7 @@ class MyClass(access_specifiers.Restricted):
         pass
 ```
 
-_Restricted_ class provides a few more useful functions:
+_Restricted_ class provides a few more useful things:
 
 _method_ Restricted.**set_private**(name, value, cls = None)
 
@@ -229,6 +229,11 @@ Useful when you write a custom \_\_delattr__ and don't wanna manually check the 
         deleter(name)
 ```
 Note: default value of _depth_ is deliberately not 1. The reason for that is complicated and you don't need to know the details unless you call this function from somewhere else.
+
+Restricted.**\_subclasses_**
+
+This is a class variable holding a list of subclasses. 
+Elements of this list doesn't check access to their private and protected members but do check to private members coming from their bases.
 
 Functions below are provided by _Restrictor_, which means they are only available to classes, not objects:
 

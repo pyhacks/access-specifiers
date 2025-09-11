@@ -1459,6 +1459,10 @@ def create_api():
                     get_private = object.__getattribute__(self, "get_private")
                     all_hidden_values = get_private("all_hidden_values")
                     AccessEssentials = list(all_hidden_values.keys())[-1]
+                    if depth != 2:
+                        caller = sys._getframe(1).f_code
+                        if caller not in all_hidden_values[AccessEssentials]["auth_codes"]:
+                            raise PrivateError("Setting depth parameter is not allowed")
                     hidden_store = all_hidden_values[AccessEssentials]["hidden_store"]
                     no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
                     @no_redirect(get_private("all_hidden_values"))
@@ -1812,6 +1816,12 @@ def create_api():
                                 raise ProtectedError(f"\"{_caller.co_name}\" is not authorized to use this function")                            
                     
                     get_private = object.__getattribute__(self, "get_private")
+                    all_hidden_values = get_private("all_hidden_values")
+                    AccessEssentials = list(all_hidden_values.keys())[-1]
+                    if depth != 2:
+                        caller = sys._getframe(1).f_code
+                        if caller not in all_hidden_values[AccessEssentials]["auth_codes"]:
+                            raise PrivateError("Setting depth parameter is not allowed")                    
                     no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
                     @no_redirect(get_private("all_hidden_values"))                                        
                     def create_setattr(self, depth):                    
@@ -2024,6 +2034,12 @@ def create_api():
                                 raise ProtectedError(f"\"{_caller.co_name}\" is not authorized to use this function")                            
                     
                     get_private = object.__getattribute__(self, "get_private")
+                    all_hidden_values = get_private("all_hidden_values")
+                    AccessEssentials = list(all_hidden_values.keys())[-1]
+                    if depth != 2:
+                        caller = sys._getframe(1).f_code
+                        if caller not in all_hidden_values[AccessEssentials]["auth_codes"]:
+                            raise PrivateError("Setting depth parameter is not allowed")                                        
                     no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
                     @no_redirect(get_private("all_hidden_values"))                                       
                     def create_delattr(self, depth):                    
@@ -2296,6 +2312,56 @@ def create_api():
                         return value
 
                     self.authorize(get_member)
+
+                    def get_member2(self, all_hidden_values, name):
+                        try:
+                            class_id = type.__getattribute__(type(hidden_store.value.self), "class_id")
+                        except AttributeError:
+                            has_class_id = False
+                        else:
+                            has_class_id = True                                
+                        if has_class_id and class_id in ["access_modifiers.SecureApi", "access_modifiers.SecureInstance", "access_modifiers.SecureClass"]:
+                            return get_member(self, all_hidden_values[type(self)], name)                        
+                        caller = sys._getframe(3).f_code
+                        for cls in all_hidden_values:
+                            if caller in all_hidden_values[cls]["auth_codes"]:
+                                try:
+                                    value = type.__getattribute__(cls, name)
+                                except AttributeError:
+                                    found = False
+                                    for base2 in cls.__mro__:                        
+                                        try:
+                                            raw_base = type.__getattribute__(base2, "protected_gate")
+                                        except AttributeError:
+                                            raw_base = base2                            
+                                        else:
+                                            raw_base = raw_base.cls.own_all_hidden_values[type(raw_base.cls)]["cls"]
+                                        try:                            
+                                            value = type.__getattribute__(raw_base, name)                            
+                                            type.__delattr__(raw_base, name)
+                                            found = True
+                                        except AttributeError:                                                   
+                                            continue
+                                        except TypeError:
+                                            pass
+                                        else:
+                                            type.__setattr__(raw_base, name, value)                           
+                                            is_builtin_new = name == "_new_" and value == object.__new__
+                                            is_builtin_new2 = name == "__new__" and value == object.__new__
+                                            is_builtin = type(value) == types.WrapperDescriptorType
+                                            if is_builtin_new or is_builtin_new2 or is_builtin:
+                                                continue
+                                            break
+                                    if found:
+                                        value = types.MethodType(value, self)
+                                    else:
+                                        value = default_getter
+                                else:
+                                    value = types.MethodType(value, self)
+                                return value
+                        return get_member(self, all_hidden_values[type(self)], name)
+                                    
+                    self.authorize(get_member2)
                     
                     def check_caller(self, depth = 2, name = "hidden_values"):
                         depth += 1
@@ -2317,6 +2383,7 @@ def create_api():
 
                     hidden_store.value.check_caller = check_caller
                     hidden_store.value.get_member = get_member
+                    hidden_store.value.get_member2 = get_member2
 
                     default_getter = self.create_getattribute(depth = 0)
                     hidden_store.value.default_getter = default_getter
@@ -2327,7 +2394,7 @@ def create_api():
                         should_redirect = maybe_redirect and name not in ["__class__", "own_hidden_values", "own_all_hidden_values"]
                         if should_redirect:
                             hidden_store.value.all_hidden_values[type(self)]["redirect_access"] = False
-                            _getattribute_ = hidden_store.value.get_member(self, hidden_store.value.all_hidden_values[type(self)], "_getattribute_")
+                            _getattribute_ = hidden_store.value.get_member2(self, hidden_store.value.all_hidden_values, "_getattribute_")
                             if type(_getattribute_) == PrivateError:
                                 _getattribute_ = hidden_store.value.get_member(self, hidden_store.value.all_hidden_values[AccessEssentials], "_getattribute_")
                             if _getattribute_.__code__ != hidden_store.value.default_getter.__code__:                                
@@ -2367,13 +2434,13 @@ def create_api():
                             return value
                         elif name == "own_hidden_values":                            
                             if not hidden_store.value.check_caller(self):                                
-                                raise PrivateError(sys._getframe(2).f_code.co_name, name, type(self).__name__)
+                                raise PrivateError(sys._getframe(2).f_code.co_name, name, type.__getattribute__(type(self), "__name__"))
                             caller = sys._getframe(2).f_code
                             for cls in hidden_store.value.all_hidden_values:
                                 if caller in hidden_store.value.all_hidden_values[cls]["auth_codes"]:
                                     break
                             else:
-                                raise PrivateError(sys._getframe(2).f_code.co_name, "own_hidden_values", type(self).__name__)
+                                raise PrivateError(sys._getframe(2).f_code.co_name, "own_hidden_values", type.__getattribute__(type(self), "__name__"))
                             return hidden_store.value.all_hidden_values[cls]
                         elif name == "own_all_hidden_values":
                             if not hidden_store.value.check_caller(self, name = "all_hidden_values"):
@@ -2427,7 +2494,7 @@ def create_api():
                                          hidden_store.value.all_hidden_values[type(self)]["redirect_access"] == True
                         should_redirect = maybe_redirect and name not in ["__class__", "own_hidden_values", "own_all_hidden_values"]
                         if should_redirect:
-                            _setattr_ = hidden_store.value.get_member(self, hidden_store.value.all_hidden_values[type(self)], "_setattr_")
+                            _setattr_ = hidden_store.value.get_member2(self, hidden_store.value.all_hidden_values, "_setattr_")
                             if type(_setattr_) == PrivateError:
                                 _setattr_ = hidden_store.value.get_member(self, hidden_store.value.all_hidden_values[AccessEssentials], "_setattr_")
                             if _setattr_.__code__ != hidden_store.value.default_setter.__code__:
@@ -2443,13 +2510,13 @@ def create_api():
                             _setattr_(name, value)
                         elif name == "own_hidden_values":
                             if not hidden_store.value.check_caller(self):
-                                raise PrivateError(sys._getframe(2).f_code.co_name, name, type(self).__name__)
+                                raise PrivateError(sys._getframe(2).f_code.co_name, name, type.__getattribute__(type(self), "__name__"))
                             caller = sys._getframe(2).f_code
                             for cls in hidden_store.value.all_hidden_values:
                                 if caller in hidden_store.value.all_hidden_values[cls]["auth_codes"]:
                                     break
                             else:
-                                raise PrivateError(sys._getframe(2).f_code.co_name, "own_hidden_values", type(self).__name__)
+                                raise PrivateError(sys._getframe(2).f_code.co_name, "own_hidden_values", type.__getattribute__(type(self), "__name__"))
                             if value is not hidden_store.value.all_hidden_values[cls]:
                                 hidden_store.value.all_hidden_values[cls].clear()
                                 hidden_store.value.all_hidden_values[cls].update(value)
@@ -2480,7 +2547,7 @@ def create_api():
                                          hidden_store.value.all_hidden_values[type(self)]["redirect_access"] == True
                         should_redirect = maybe_redirect and name not in ["__class__", "own_hidden_values", "own_all_hidden_values"]
                         if should_redirect:
-                            _delattr_ = hidden_store.value.get_member(self, hidden_store.value.all_hidden_values[type(self)], "_delattr_")
+                            _delattr_ = hidden_store.value.get_member2(self, hidden_store.value.all_hidden_values, "_delattr_")
                             if type(_delattr_) == PrivateError:
                                 _delattr_ = hidden_store.value.get_member(self, hidden_store.value.all_hidden_values[AccessEssentials], "_delattr_")
                             if _delattr_.__code__ != hidden_store.value.default_deleter.__code__:
@@ -2496,13 +2563,13 @@ def create_api():
                             _delattr_(name)                            
                         elif name == "own_hidden_values":
                             if not hidden_store.value.check_caller(self):
-                                raise PrivateError(sys._getframe(2).f_code.co_name, name, type(self).__name__)
+                                raise PrivateError(sys._getframe(2).f_code.co_name, name, type.__getattribute__(type(self), "__name__"))
                             caller = sys._getframe(2).f_code
                             for cls in hidden_store.value.all_hidden_values:
                                 if caller in hidden_store.value.all_hidden_values[cls]["auth_codes"]:
                                     break
                             else:
-                                raise PrivateError(sys._getframe(2).f_code.co_name, "own_hidden_values", type(self).__name__)                                                                                                                  
+                                raise PrivateError(sys._getframe(2).f_code.co_name, "own_hidden_values", type.__getattribute__(type(self), "__name__"))                                                                                                                  
                             hidden_store.value.all_hidden_values[cls].clear()
                         elif name == "own_all_hidden_values":
                             if not hidden_store.value.check_caller(self, name = "all_hidden_values"):
@@ -5057,7 +5124,7 @@ def create_api():
                                                 value = new_dict
                                             elif is_ro_method(base, name, value):
                                                 value = getattr(api_self.AccessEssentials, name)                                                                             
-                                    if api_self.is_function(value):
+                                    if api_self.is_function(value) and type(value) != types.MethodType:
                                         value = types.MethodType(value, secure_instance.inst)
                                         value = secure_instance.create_secure_method(value)
                                     return value
@@ -5243,12 +5310,9 @@ def create_api():
                             type(self).own_redirect_access = True                        
                         try:                            
                             setattr(get_private("hidden_values")["inst"], name, value)
-                        except PrivateError:
-                            get_private("hidden_values")["redirect_access"] = False
-                            self.raise_PrivateError2(name, depth = 3)
-                        except ProtectedError:
-                            get_private("hidden_values")["redirect_access"] = False
-                            self.raise_ProtectedError2(name, depth = 3)
+                        except AccessError as e:                            
+                            e.caller_name = sys._getframe(3).f_code.co_name
+                            raise
                         finally:
                             get_private("hidden_values")["redirect_access"] = False                            
                     finally:
@@ -5291,12 +5355,9 @@ def create_api():
                             type(self).own_redirect_access = True                        
                         try:
                             delattr(get_private("hidden_values")["inst"], name)
-                        except PrivateError:
-                            get_private("hidden_values")["redirect_access"] = False
-                            self.raise_PrivateError2(name, depth = 3)
-                        except ProtectedError:
-                            get_private("hidden_values")["redirect_access"] = False
-                            self.raise_ProtectedError2(name, depth = 3)
+                        except AccessError as e:                            
+                            e.caller_name = sys._getframe(3).f_code.co_name
+                            raise
                         finally:
                             get_private("hidden_values")["redirect_access"] = False                            
                     finally:

@@ -207,7 +207,7 @@ Useful when you write a custom \_\_getattribute__ and don't wanna manually check
         return value
 ```
 
-_method_ Restricted.**create_setattr**(depth = 2)
+_method_ Restricted.**create_setattr**()
 
 Return a \_\_setattr__ function which checks the access rights of the caller. 
 Useful when you write a custom \_\_setattr__ and don't wanna manually check the caller:
@@ -217,7 +217,7 @@ Useful when you write a custom \_\_setattr__ and don't wanna manually check the 
         setter(name, value)
 ```
 
-_method_ Restricted.**create_delattr**(depth = 2)
+_method_ Restricted.**create_delattr**()
 
 Return a \_\_delattr__ function which checks the access rights of the caller. 
 Useful when you write a custom \_\_delattr__ and don't wanna manually check the caller:

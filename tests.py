@@ -34,7 +34,8 @@ class Test(access_specifiers.Restricted):
 
     @access_specifiers.public
     def __init__(self):
-        self.set_private("a", 10)         
+        self.set_private("a", 10)
+        self.a
         hidden_values = self.get_private("hidden_values")
         hidden_values["dsfcsd"] = 10                
         self.set_private("hidden_values", hidden_values)
@@ -167,6 +168,11 @@ class Test4(metaclass = access_specifiers.create_restrictor(Test9, Test2, Test3)
     @access_specifiers.public
     def __new__(cls):
         return object.__new__(cls)
+
+    def __getattribute__(self, name):
+        getter = self.create_getattribute()
+        value = getter(name)
+        return value
     
     @access_specifiers.public
     def test4_func(self):
@@ -312,15 +318,16 @@ class ClassC(metaclass = access_specifiers.create_restrictor(ClassA, ClassB)):
 def create_bypass():
     a = 10
     b = 20
+    c = 30
     def bypass(self, *args, **kwargs):
         a
         b
-        print("hello")
+        c
         return True
     return bypass
 
     
-def test():
+def test():    
     for base in ClassC.__mro__:
         print(base.__name__)
     ClassC().MethodA()

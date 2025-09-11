@@ -196,9 +196,9 @@ obj = Derived()
 obj.func()
  ```   
     
-_method_ Restricted.**create_getattribute**(depth = 2)
+_method_ Restricted.**create_getattribute**()
 
-Return a \_\_getattribute__ function which checks the access rights of the function _depth_ times back in the stack. 
+Return a \_\_getattribute__ function which checks the access rights of the caller. 
 Useful when you write a custom \_\_getattribute__ and don't wanna manually check the caller:
 ```python
     def __getattribute__(self, name):
@@ -206,29 +206,26 @@ Useful when you write a custom \_\_getattribute__ and don't wanna manually check
         value = getter(name)
         return value
 ```
-Note: default value of _depth_ is deliberately not 1. The reason for that is complicated and you don't need to know the details unless you call this function from somewhere else.
 
 _method_ Restricted.**create_setattr**(depth = 2)
 
-Return a \_\_setattr__ function which checks the access rights of the function _depth_ times back in the stack. 
+Return a \_\_setattr__ function which checks the access rights of the caller. 
 Useful when you write a custom \_\_setattr__ and don't wanna manually check the caller:
 ```python
     def __setattr__(self, name, value):
         setter = self.create_setattr()
         setter(name, value)
 ```
-Note: default value of _depth_ is deliberately not 1. The reason for that is complicated and you don't need to know the details unless you call this function from somewhere else.
 
 _method_ Restricted.**create_delattr**(depth = 2)
 
-Return a \_\_delattr__ function which checks the access rights of the function _depth_ times back in the stack. 
+Return a \_\_delattr__ function which checks the access rights of the caller. 
 Useful when you write a custom \_\_delattr__ and don't wanna manually check the caller:
 ```python
     def __delattr__(self, name):
         deleter = self.create_delattr()
         deleter(name)
 ```
-Note: default value of _depth_ is deliberately not 1. The reason for that is complicated and you don't need to know the details unless you call this function from somewhere else.
 
 Restricted.**\_subclasses_**
 

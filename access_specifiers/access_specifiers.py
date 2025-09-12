@@ -1115,7 +1115,10 @@ def create_api():
                         all_hidden_values[cls]["auth_codes"].add(func_or_cls.__code__)
                     else:
                         for name in dir(func_or_cls):
-                            member = getattr(func_or_cls, name)
+                            try:
+                                member = getattr(func_or_cls, name)
+                            except AttributeError:
+                                continue
                             try:
                                 isinstance(member, AccessError)
                             except RuntimeError:
@@ -5367,7 +5370,23 @@ def create_api():
                         if obj_will_redirect:
                             hidden_values["redirect_access"] = True                                          
                         if cls_will_redirect:
-                            type(self).own_redirect_access = True                    
+                            type(self).own_redirect_access = True
+
+                def __enter__(self):
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("all_hidden_values"))
+                    def __enter__(self):
+                        return self.inst.__enter__()
+                    return __enter__(self)
+
+                def __exit__(self, exc_type, exc_value, traceback):
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("all_hidden_values"))
+                    def __exit__(self, exc_type, exc_value, traceback):
+                        return self.inst.__exit__(exc_type, exc_value, traceback)
+                    return __exit__(self, exc_type, exc_value, traceback)                
                    
             return SecureInstance
 

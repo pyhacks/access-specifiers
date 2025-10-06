@@ -5387,6 +5387,22 @@ def create_api():
                     def __exit__(self, exc_type, exc_value, traceback):
                         return self.inst.__exit__(exc_type, exc_value, traceback)
                     return __exit__(self, exc_type, exc_value, traceback)                
+
+                def __aenter__(self):
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("all_hidden_values"))
+                    def __aenter__(self):
+                        return self.inst.__aenter__()
+                    return __aenter__(self)
+
+                def __aexit__(self, exc_type, exc_value, traceback):
+                    get_private = object.__getattribute__(self, "get_private")                    
+                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
+                    @no_redirect(get_private("all_hidden_values"))
+                    def __aexit__(self, exc_type, exc_value, traceback):
+                        return self.inst.__aexit__(exc_type, exc_value, traceback)
+                    return __aexit__(self, exc_type, exc_value, traceback)                
                    
             return SecureInstance
 

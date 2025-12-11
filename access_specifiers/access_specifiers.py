@@ -656,8 +656,13 @@ def create_api():
                         e.class_attr = False
                         raise                                                                                
                     if api_self.is_function(value) and type(value) != types.MethodType:
-                        value = types.MethodType(value, self)
-                    elif type(value) == types.MethodType:
+                        is_staticmethod = False
+                        _, base = type(self).get_unbound_base_attr(name, return_base = True)
+                        if name in base.__dict__ and type(base.__dict__[name]) == staticmethod:
+                            is_staticmethod = True
+                        if not is_staticmethod:
+                            value = types.MethodType(value, self)
+                    elif AccessEssentials.is_meta_method(self, name, value):
                         raise AttributeError(name)
                     return value
                     
@@ -767,6 +772,17 @@ def create_api():
                     for subclass in subclasses:
                         try:
                             member = type.__getattribute__(subclass, caller.co_name)
+                            try:
+                                not_meta_method = not hasattr(member, "__code__") or \
+                                                  not hasattr(type(subclass), caller.co_name) or \
+                                                  not hasattr(getattr(type(subclass), caller.co_name), "__code__") or \
+                                                  getattr(type(subclass), caller.co_name).__code__ != member.__code__
+                            except RuntimeError:
+                                not_meta_method = True
+                            class_dict = type.__getattribute__(subclass, "__dict__")
+                            if type(member) == types.FunctionType and hasattr(member, "__code__") and not_meta_method and caller.co_name not in class_dict:
+                                class_name = type.__getattribute__(subclass, "__name__")
+                                raise AttributeError(f"type object '{class_name}' has no attribute '{caller.co_name}'")                            
                         except AttributeError:
                             pass
                         else:
@@ -808,22 +824,6 @@ def create_api():
                             return True
                         else:
                             return False
-                    
-                    def get_base_attr(name):
-                        """static_dict check would cause infinite recursion, so we have to duplicate this function."""
-                        try:
-                            value = type(self).get_unbound_base_attr(name)
-                        except AttributeError:
-                            raise
-                        except PrivateError as e:
-                            e.caller_name = sys._getframe(1).f_code.co_name
-                            e.class_attr = False
-                            raise                                                                                
-                        if is_function(value) and type(value) != types.MethodType:
-                            value = types.MethodType(value, self)
-                        elif type(value) == types.MethodType:
-                            raise AttributeError(name)
-                        return value
 
                     def get_member(self, hidden_values, name):
                         """We have to duplicate this function because we can't trust AccessEssentials.get_member
@@ -1203,6 +1203,13 @@ def create_api():
                     AccessEssentials = list(all_hidden_values.keys())[-1]
                     def get_private(self, name):
                         """Return the requested private/protected member if the caller is authorized to access it."""
+                        def is_meta_method(self, name, value):
+                            if hasattr(all_hidden_values[AccessEssentials]["InsecureRestrictor"], name):
+                                function = getattr(all_hidden_values[AccessEssentials]["InsecureRestrictor"], name)
+                                if is_function(value) and value.__code__ == function.__code__:
+                                    return True
+                            return False                
+                        
                         def get_base_attr(name):
                             """static_dict check would cause infinite recursion, so we have to duplicate this function."""
                             try:
@@ -1216,8 +1223,16 @@ def create_api():
                             
                             is_function = callable(value) and hasattr(value, "__code__") and type(value.__code__) == types.CodeType
                             if is_function and type(value) != types.MethodType:
-                                value = types.MethodType(value, self)
-                            elif type(value) == types.MethodType:
+                                is_staticmethod = False
+                                if name in type(self).__dict__ and type(type(self).__dict__[name]) == staticmethod:
+                                    is_staticmethod = True
+                                elif name not in type(self).__dict__:
+                                    _, base = type(self).get_unbound_base_attr(name, return_base = True)
+                                    if name in base.__dict__ and type(base.__dict__[name]) == staticmethod:
+                                        is_staticmethod = True
+                                if not is_staticmethod:
+                                    value = types.MethodType(value, self)
+                            elif is_meta_method(self, name, value):
                                 raise AttributeError(name)
                             return value
                             
@@ -1284,6 +1299,17 @@ def create_api():
                                 cls = hidden_values["cls"]
                                 try:
                                     value = type.__getattribute__(cls, name)
+                                    try:
+                                        not_meta_method = not hasattr(value, "__code__") or \
+                                                          not hasattr(type(cls), name) or \
+                                                          not hasattr(getattr(type(cls), name), "__code__") or \
+                                                          getattr(type(cls), name).__code__ != value.__code__
+                                    except RuntimeError:
+                                        not_meta_method = True
+                                    class_dict = type.__getattribute__(cls, "__dict__")
+                                    if type(value) == types.FunctionType and hasattr(value, "__code__") and not_meta_method and name not in class_dict:
+                                        class_name = type.__getattribute__(cls, "__name__")
+                                        raise AttributeError(f"type object '{class_name}' has no attribute '{name}'")                                                                    
                                 except AttributeError:
                                     try:
                                         return force_get_attr(cls.__bases__, name)     
@@ -1291,7 +1317,12 @@ def create_api():
                                         continue
                                 else:
                                     if api_self.is_function(value) and type(value) != types.MethodType:
-                                        value = types.MethodType(value, self)
+                                        if name in cls.__dict__ and type(cls.__dict__[name]) == staticmethod:
+                                            is_staticmethod = True
+                                        else:
+                                            is_staticmethod = False
+                                        if not is_staticmethod:
+                                            value = types.MethodType(value, self)
                                     elif is_meta_method(self, name, value):                                            
                                         continue
                                     elif type(value) == types.MethodType:
@@ -1492,7 +1523,15 @@ def create_api():
                                 
                                 is_function = callable(value) and hasattr(value, "__code__") and type(value.__code__) == types.CodeType
                                 if is_function and type(value) != types.MethodType:
-                                    value = types.MethodType(value, self)
+                                    is_staticmethod = False
+                                    if name in type(self).__dict__ and type(type(self).__dict__[name]) == staticmethod:
+                                        is_staticmethod = True
+                                    elif name not in type(self).__dict__:
+                                        _, base = type(self).get_unbound_base_attr(name, return_base = True)
+                                        if name in base.__dict__ and type(base.__dict__[name]) == staticmethod:
+                                            is_staticmethod = True
+                                    if not is_staticmethod:
+                                        value = types.MethodType(value, self)
                                 elif is_meta_method(self, name, value):
                                     raise AttributeError(name)
                                 return value
@@ -1503,7 +1542,7 @@ def create_api():
                                     value = object.__getattribute__(self, name)
                                 except AttributeError as e:
                                     try:
-                                        value = get_base_attr(name)                                        
+                                        value = get_base_attr(name)
                                     except AttributeError:
                                         raise e
                                     except PrivateError as e:                                        
@@ -1540,15 +1579,31 @@ def create_api():
                                     hidden_values = pg.cls.own_all_hidden_values[type(pg.cls)]
                                     cls = hidden_values["cls"]
                                     try:
-                                        value = type.__getattribute__(cls, name)                                        
+                                        value = type.__getattribute__(cls, name)
+                                        try:
+                                            not_meta_method = not hasattr(value, "__code__") or \
+                                                              not hasattr(type(cls), name) or \
+                                                              not hasattr(getattr(type(cls), name), "__code__") or \
+                                                              getattr(type(cls), name).__code__ != value.__code__
+                                        except RuntimeError:
+                                            not_meta_method = True
+                                        class_dict = type.__getattribute__(cls, "__dict__")
+                                        if type(value) == types.FunctionType and hasattr(value, "__code__") and not_meta_method and name not in class_dict:
+                                            class_name = type.__getattribute__(cls, "__name__")
+                                            raise AttributeError(f"type object '{class_name}' has no attribute '{name}'")                                                                        
                                     except AttributeError:                                        
                                         try:
                                             return force_get_attr(cls.__bases__, name)     
                                         except AttributeError:
                                             continue
                                     else:
-                                        if api_self.is_function(value) and type(value) != types.MethodType:
-                                            value = types.MethodType(value, self)
+                                        if api_self.is_function(value) and type(value) != types.MethodType:                                            
+                                            if name in cls.__dict__ and type(cls.__dict__[name]) == staticmethod:
+                                                is_staticmethod = True
+                                            else:
+                                                is_staticmethod = False
+                                            if not is_staticmethod:
+                                                value = types.MethodType(value, self)
                                         elif is_meta_method(self, name, value):                                            
                                             continue
                                         elif type(value) == types.MethodType:
@@ -1632,8 +1687,7 @@ def create_api():
                                         except PrivateError:                                            
                                             is_private = False # will skip to else clause                                            
                                         if is_private and type(self).is_protected(name):
-                                            is_base_protected = True
-
+                                            is_base_protected = True                                            
                                     except TypeError: # name is "__class__"
                                         pass
                                     else:
@@ -1695,7 +1749,7 @@ def create_api():
                                                         if broken:
                                                             break
                                                 if broken:
-                                                    break                                                
+                                                    break
                                 AccessEssentials2 = get_member(self, all_hidden_values[AccessEssentials], "AccessEssentials2")
                                 if not hasattr(AccessEssentials2, "check_caller"):
                                     AccessEssentials2 = api_self.AccessEssentials
@@ -1757,7 +1811,7 @@ def create_api():
                                     value = all_hidden_values
                                 else:
                                     try:                                        
-                                        value = get_attr(name)
+                                        value = get_attr(name)                                        
                                     except PrivateError as e:
                                         if not authorized_caller:
                                             e.caller_name = sys._getframe(depth).f_code.co_name
@@ -1766,7 +1820,8 @@ def create_api():
                                             value = force_get_attr(type(self).__bases__, name)                                            
                                 return value
 
-                            all_hidden_values = hidden_store.value.all_hidden_values                            
+                            all_hidden_values = hidden_store.value.all_hidden_values
+                            all_hidden_values[AccessEssentials]["auth_codes"].add(get_base_attr.__code__)
                             all_hidden_values[AccessEssentials]["auth_codes"].add(force_get_attr.__code__)
                             all_hidden_values[AccessEssentials]["auth_codes"].add(_getattribute_.__code__)                            
 
@@ -2295,7 +2350,10 @@ def create_api():
                                 else:
                                     raw_base = raw_base.cls.own_all_hidden_values[type(raw_base.cls)]["cls"]
                                 try:                            
-                                    value = type.__getattribute__(raw_base, name)                            
+                                    value = type.__getattribute__(raw_base, name)
+                                    class_dict = type.__getattribute__(raw_base, "__dict__")
+                                    if name in class_dict:
+                                        value = class_dict[name]                                    
                                     type.__delattr__(raw_base, name)
                                     found = True
                                 except AttributeError:                                                   
@@ -2340,7 +2398,10 @@ def create_api():
                                         else:
                                             raw_base = raw_base.cls.own_all_hidden_values[type(raw_base.cls)]["cls"]
                                         try:                            
-                                            value = type.__getattribute__(raw_base, name)                            
+                                            value = type.__getattribute__(raw_base, name)
+                                            class_dict = type.__getattribute__(raw_base, "__dict__")
+                                            if name in class_dict:
+                                                value = class_dict[name]                                            
                                             type.__delattr__(raw_base, name)
                                             found = True
                                         except AttributeError:                                                   
@@ -3508,7 +3569,33 @@ def create_api():
                         if "__classcell__" in cls.static_dict:
                             new_dict["__classcell__"] = cls.static_dict["__classcell__"]
 
-                        new_cls = api_self.InsecureRestrictor(cls.__name__, cls.__bases__, new_dict)
+                        new_cls = api_self.InsecureRestrictor(cls.__name__, cls.__bases__, new_dict)                        
+                        all_names = new_cls.__dict__
+                        for member_name in all_names:                        
+                            try:
+                                member = type.__getattribute__(new_cls, member_name)
+                            except AttributeError:
+                                continue             
+                            else:
+                                try:
+                                    has_class_id = hasattr(member, "class_id")
+                                except RuntimeError:
+                                    continue
+                                else:
+                                    if has_class_id and member.class_id == "access_modifiers.Decoration":
+                                        functions = []
+                                        decoration = member
+                                        while not api_self.is_function(decoration.func):                                            
+                                            functions.append(decoration.decorator)
+                                            decoration = decoration.func
+                                        functions.append(decoration.decorator)
+                                        func = decoration.func
+                                        while True:
+                                            try:
+                                                func = functions.pop()(func)
+                                            except IndexError:
+                                                break
+                                        type.__setattr__(new_cls, member_name, func)                        
                         
                         if "__new__" in new_cls._privates_ and "__new__" not in new_cls._protecteds_:
                             caller = sys._getframe(1).f_code
@@ -3754,6 +3841,9 @@ def create_api():
                             raw_base = raw_base.cls.own_hidden_values["cls"]
                         try:                            
                             value = type.__getattribute__(raw_base, name)
+                            class_dict = type.__getattribute__(raw_base, "__dict__")
+                            if name in class_dict:
+                                value = class_dict[name]                            
                             type.__delattr__(raw_base, name)
                         except AttributeError:
                             try:
@@ -3801,6 +3891,9 @@ def create_api():
                 def has_own_attr(cls, name):
                     try:
                         value = type.__getattribute__(cls, name)
+                        class_dict = type.__getattribute__(cls, "__dict__")
+                        if name in class_dict:
+                            value = class_dict[name]
                         type.__delattr__(cls, name)
                     except AttributeError:
                         return False
@@ -3825,14 +3918,14 @@ def create_api():
                                 return True
                             else:
                                 raise
-
+                            
                     is_private = hasattr(cls, "_publics_") and name not in cls._publics_ and name != "__name__" and name in cls.base_privates
                     if hasattr(cls, "_privates_") and (name in cls._privates_ or name in cls._protecteds_ or is_private):                        
-                        return False
+                        return False                    
                     is_private = hasattr(subclass, "_publics_") and name not in subclass._publics_ and name != "__name__" and  name in subclass.base_privates
                     if is_private:                        
-                        return False
-                    if hasattr(subclass, "_publics_") and name in subclass._publics_:
+                        return False                    
+                    if hasattr(subclass, "_publics_") and name in subclass._publics_:                        
                         return True
                     if hasattr(subclass, "_protecteds_") and name in subclass._protecteds_:
                         return False
@@ -3913,9 +4006,8 @@ def create_api():
                     else:                        
                         if name == "own_redirect_access":
                             name = "redirect_access"                            
-                        try:                                                 
+                        try:
                             value = type.__getattribute__(cls, name)                            
-                            deleted = False
                             try:
                                 not_meta_method = not hasattr(value, "__code__") or \
                                                   not hasattr(type(cls), name) or \
@@ -3923,17 +4015,10 @@ def create_api():
                                                   getattr(type(cls), name).__code__ != value.__code__
                             except RuntimeError:
                                 not_meta_method = True
-                            if type(value) == types.FunctionType and hasattr(value, "__code__") and not_meta_method:
-                                class AttributeTest:
-                                    pass
-                                try:
-                                    setattr(AttributeTest, name, value)
-                                    delattr(AttributeTest, name)
-                                except AttributeError:                                    
-                                    pass
-                                else:
-                                    type.__delattr__(cls, name)
-                                    deleted = True
+                            class_dict = type.__getattribute__(cls, "__dict__")
+                            if type(value) == types.FunctionType and hasattr(value, "__code__") and not_meta_method and name not in class_dict:
+                                class_name = type.__getattribute__(cls, "__name__")
+                                raise AttributeError(f"type object '{class_name}' has no attribute '{name}'")                                
                         except AttributeError as e:
                             get_unbound_base_attr = type.__getattribute__(cls, "get_unbound_base_attr")
                             try:                                
@@ -3948,8 +4033,6 @@ def create_api():
                                 value = types.MethodType(value, cls.secure_class)
                             return value
                         else:
-                            if deleted:
-                                type.__setattr__(cls, name, value)
                             is_builtin_new = name == "_new_" and value == object.__new__
                             is_builtin_new2 = name == "__new__" and value == object.__new__
                             is_builtin = type(value) == types.WrapperDescriptorType
@@ -4125,7 +4208,10 @@ def create_api():
                                         else:
                                             raw_base = raw_base.cls.own_hidden_values["cls"]
                                         try:                            
-                                            value = type.__getattribute__(raw_base, name)                            
+                                            value = type.__getattribute__(raw_base, name)
+                                            class_dict = type.__getattribute__(raw_base, "__dict__")
+                                            if name in class_dict:
+                                                value = class_dict[name]                                            
                                             type.__delattr__(raw_base, name)
                                             found = True
                                         except AttributeError:                                                   
@@ -4159,7 +4245,10 @@ def create_api():
                                         else:
                                             raw_base = raw_base.cls.own_hidden_values["cls"]
                                         try:                            
-                                            value = type.__getattribute__(raw_base, name)                            
+                                            value = type.__getattribute__(raw_base, name)
+                                            class_dict = type.__getattribute__(raw_base, "__dict__")
+                                            if name in class_dict:
+                                                value = class_dict[name]                                                
                                             type.__delattr__(raw_base, name)
                                             found = True
                                         except AttributeError:                                                   
@@ -4336,7 +4425,10 @@ def create_api():
                                                 else:
                                                     raw_base = raw_base.cls.own_all_hidden_values[type(raw_base.cls)]["cls"]
                                                 try:                            
-                                                    value = type.__getattribute__(raw_base, name)                            
+                                                    value = type.__getattribute__(raw_base, name)
+                                                    class_dict = type.__getattribute__(raw_base, "__dict__")
+                                                    if name in class_dict:
+                                                        value = class_dict[name]                                                                                
                                                     type.__delattr__(raw_base, name)
                                                     found = True
                                                 except AttributeError:                                                   
@@ -4585,6 +4677,17 @@ def create_api():
                     for subclass in subclasses:
                         try:
                             member = type.__getattribute__(subclass, caller.co_name)
+                            try:
+                                not_meta_method = not hasattr(member, "__code__") or \
+                                                  not hasattr(type(subclass), caller.co_name) or \
+                                                  not hasattr(getattr(type(subclass), caller.co_name), "__code__") or \
+                                                  getattr(type(subclass), caller.co_name).__code__ != member.__code__
+                            except RuntimeError:
+                                not_meta_method = True
+                            class_dict = type.__getattribute__(subclass, "__dict__")
+                            if type(member) == types.FunctionType and hasattr(member, "__code__") and not_meta_method and caller.co_name not in class_dict:
+                                class_name = type.__getattribute__(subclass, "__name__")
+                                raise AttributeError(f"type object '{class_name}' has no attribute '{caller.co_name}'")                            
                         except AttributeError:
                             pass
                         else:                           
@@ -4972,7 +5075,10 @@ def create_api():
                                                 else:
                                                     raw_base = raw_base.cls.own_all_hidden_values[type(raw_base.cls)]["cls"]
                                                 try:                            
-                                                    value = type.__getattribute__(raw_base, name)                            
+                                                    value = type.__getattribute__(raw_base, name)
+                                                    class_dict = type.__getattribute__(raw_base, "__dict__")
+                                                    if name in class_dict:
+                                                        value = class_dict[name]                                                                    
                                                     type.__delattr__(raw_base, name)
                                                     found = True
                                                 except AttributeError:                                                   

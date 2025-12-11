@@ -12,14 +12,14 @@ access_specifiers.set_default(access_specifiers.public)
 def factory1(func):
     def wrapper(*args, **kwargs):
         print("here1")
-        func(*args, **kwargs)
+        return func(*args, **kwargs)
     return wrapper
 
 
 def factory2(func):
     def wrapper(*args, **kwargs):
         print("here2")
-        func(*args, **kwargs)
+        return func(*args, **kwargs)
     return wrapper
     
         
@@ -33,7 +33,7 @@ class Test(access_specifiers.Restricted):
         return object.__new__(cls)
 
     @access_specifiers.public
-    def __init__(self):
+    def __init__(self):        
         self.set_private("a", 10)
         self.a
         hidden_values = self.get_private("hidden_values")
@@ -57,6 +57,11 @@ class Test(access_specifiers.Restricted):
     @access_specifiers.Decorator(classmethod)
     def get_class(cls):
         return cls
+
+    #@access_specifiers.private
+    @access_specifiers.Decorator(staticmethod)
+    def public_static1():
+        print("public static method called")
     
     @access_specifiers.Decorator(classmethod)
     @access_specifiers.Decorator(factory2)
@@ -326,12 +331,13 @@ def create_bypass():
         return True
     return bypass
 
-    
-def test():    
+
+def test():
     for base in ClassC.__mro__:
         print(base.__name__)
     ClassC().MethodA()
     a = Test()
+    a.public_static1()
     a.public1()
     a.show_a()
     a.func()
@@ -339,6 +345,7 @@ def test():
     b = Test()
 
     c = Test4()
+    c.public_static1()
     c.func()
     c.test4_func()
     c.after_test4()

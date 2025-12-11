@@ -254,4 +254,3 @@ import gc
 del gc.get_objects
 ```
 This isn't done by this library in case the user actually requires this function. 
-- @staticmethod is not supported

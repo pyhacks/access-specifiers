@@ -22,7 +22,21 @@ def factory2(func):
         return func(*args, **kwargs)
     return wrapper
     
-        
+
+class Descriptor:
+    def __get__(self, instance, owner = None):
+        if instance is not None:
+            instance.a
+            pass
+
+    def __set__(self, instance, value):
+        print(f"called with {value}")
+        print("in __set__")
+
+    def __delete__(self, instance):
+        print("in __delete__")
+
+    
 class Test(access_specifiers.Restricted):
     abc = access_specifiers.protected(30)
     public .my_var = 15
@@ -33,9 +47,23 @@ class Test(access_specifiers.Restricted):
         return object.__new__(cls)
 
     @access_specifiers.public
-    def __init__(self):        
+    def __init__(self):
+        @Test.func123.setter
+        def func123(self, value):
+            print(self)
+            print("hello2")
+        Test.func123 = access_specifiers.hook_descriptor(func123)
+        def func123(self):
+            print(self)
+            print(self.a)
+            print("hello3")
+        self.authorize(func123)        
+        func123 = Test.func123.deleter(func123)
+        Test.func123 = access_specifiers.hook_descriptor(func123)
+
+        self.authorize(Descriptor)
         self.set_private("a", 10)
-        self.a
+        self.a        
         hidden_values = self.get_private("hidden_values")
         hidden_values["dsfcsd"] = 10                
         self.set_private("hidden_values", hidden_values)
@@ -53,22 +81,43 @@ class Test(access_specifiers.Restricted):
         self.fghd = 65
         self.get_class()
 
-    @access_specifiers.private
+    @access_specifiers.Decorator(classmethod)
+    def instantiate(cls):
+        return cls()
+        
+    #@access_specifiers.private
     @access_specifiers.Decorator(classmethod)
     def get_class(cls):
         return cls
+
+    @access_specifiers.Decorator(classmethod)
+    def authorize_descriptor(cls):
+        cls.authorize_for_class(Descriptor)    
 
     #@access_specifiers.private
     @access_specifiers.Decorator(staticmethod)
     def public_static1():
         print("public static method called")
+
+    @access_specifiers.Decorator(classmethod)
+    def set_descriptor(cls):
+        cls.set_class_private("desc2", access_specifiers.hook_descriptor(Descriptor()))
+        
+    #@access_specifiers.private
+    @access_specifiers.Decorator(property)
+    def func123(self):
+        print(self)
+        print(self.a)
+        print("hello1")
+
+    desc = Descriptor()
     
     @access_specifiers.Decorator(classmethod)
     @access_specifiers.Decorator(factory2)
     @access_specifiers.Decorator(factory1)
     def public1(cls):        
         print(cls)
-        print("public method called")        
+        print("public method called")
 
     @access_specifiers.private
     def private1(self):
@@ -181,7 +230,7 @@ class Test4(metaclass = access_specifiers.create_restrictor(Test9, Test2, Test3)
     
     @access_specifiers.public
     def test4_func(self):
-        #self.check_caller.__func__.__code__ = create_bypass().__code__
+        #self.check_caller.__func__.__code__ = create_bypass().__code__        
         Test.abc
         self.protected2
         self.__init__()
@@ -234,13 +283,13 @@ class Test5(Test8, metaclass = access_specifiers.create_restrictor(Test2, Test7)
     _protecteds_ = ["var2"]
     var1 = 21
     var2 = 435
-
+    
     #def __new__(cls):
     #    return object.__new__(cls)
     
     #def __init__(self):
     #    print("in Test5.__init__")
-        
+       
     def my_func(self):
         real_Test6 = Test6.get_class()
         real_Test6.func1(real_Test6(), self)
@@ -299,13 +348,24 @@ class Test13(metaclass = access_specifiers.create_restrictor(Test11)):
         print(self.a)
 
 
+class Test15(access_specifiers.Restricted):
+    __slots__ = ["a"]
+    _privates_ = ["a"]
+
+    def __init__(self):
+        self.a = 20
+        private = self.private        
+        private .a = 10
+        print(self.a)
+
+        
 class Class0(access_specifiers.Restricted):
     def MethodA(self):
         print("MethodA of Class0")
     
 
 class ClassA(metaclass = access_specifiers.create_restrictor(Class0)):
-    def MethodA(self):        
+    def MethodA(self):
         access_specifiers.super().MethodA()
         print("MethodA of ClassA")
     
@@ -335,7 +395,7 @@ def create_bypass():
 def test():
     for base in ClassC.__mro__:
         print(base.__name__)
-    ClassC().MethodA()
+    ClassC().MethodA()    
     a = Test()
     a.public_static1()
     a.public1()

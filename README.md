@@ -142,6 +142,13 @@ class MyClass(access_specifiers.Restricted):
         pass
 ```
 
+_function_ access_specifiers.**hook_descriptor**(descriptor)
+
+If you need to add a descriptor to a class after creating the class (not in the class body), you need to pass your descriptor object to this function and use its return value instead.
+Otherwise you will face PrivateError when trying to access the member implemented by the descriptor later on. 
+The reasons for that is raw descriptors could be used to bypass private members.
+This function is automatically called for descriptors defined in the class body.
+
 _Restricted_ class provides a few more useful things:
 
 _method_ Restricted.**set_private**(name, value, cls = None)

@@ -424,128 +424,110 @@ def create_api():
                     if owner is not None:
                         owner = type.__getattribute__(owner, "secure_class")
                     descriptor = self.wrapped_desc
-                    hidden_obj = self.hidden_obj
-                    del self
+                    ban_frames = True
                     if instance is not None:
                         secure_instance = object.__getattribute__(instance, "_self_")
-                        del instance
                         if type(descriptor) == classmethod:
                             secure_class = type.__getattribute__(type(secure_instance), "proxy")
                             value = descriptor.__get__(None, secure_class)
                         else:
                             value = descriptor.__get__(secure_instance, owner)
                     else:
-                        del instance
                         value = descriptor.__get__(None, owner)
+                    ban_frames = False
                     if value == descriptor:
-                        return hidden_obj.value
+                        return self
                     else:
                         return value
 
                 def __set__(self, instance, value):                    
                     descriptor = self.wrapped_desc
                     secure_instance = object.__getattribute__(instance, "_self_")
-                    del self
-                    del instance                        
-                    descriptor.__set__(secure_instance, value)                                      
+                    ban_frames = True
+                    descriptor.__set__(secure_instance, value)
+                    ban_frames = False
 
                 def __delete__(self, instance):
                     descriptor = self.wrapped_desc
                     secure_instance = object.__getattribute__(instance, "_self_")
-                    del self
-                    del instance                        
+                    ban_frames = True
                     descriptor.__delete__(secure_instance)
+                    ban_frames = False
 
                 def __getattribute__(self, name):
-                    if name in ["wrapped_desc", "hidden_obj", "secure_instance", "__get__", "__set__", "__delete__"]:
+                    if name in ["wrapped_desc", "__get__", "__set__", "__delete__"]:
                         return object.__getattribute__(self, name)
                     else:
                         return getattr(self.wrapped_desc, name)
 
                 def __setattr__(self, name, value):
-                    if name in ["wrapped_desc", "hidden_obj", "secure_instance"]:
+                    if name in ["wrapped_desc"]:
                         object.__setattr__(self, name, value)
                     else:
                         setattr(self.wrapped_desc, name, value)
 
                 def __delattr__(self, name):
-                    if name in ["wrapped_desc", "hidden_obj", "secure_instance"]:
+                    if name in ["wrapped_desc"]:
                         object.__delattr__(self, name)
                     else:
                         delattr(self.wrapped_desc, name)
                         
             return DescriptorProxy
-            
+
+
         @property
-        def hook_descriptor(api_self):
-            def hook_descriptor(descriptor):
-                class Protector(api_self.Restricted):
-                    def __init__(self):
-                        self.authorize(DescriptorProxy)
-                        self.authorize(stack_cleaner(lambda:None))
+        def hook_getframe(api_self):
+            def hook_getframe():
+                class RestrictedFrame:
+                    def __init__(self, f_code):
+                        self.f_code = f_code
+
+                    def __getattr__(self, name):
+                        raise PrivateError(f"Accessing '{name}' attribute of the frame is not allowed while executing descriptor methods")
                         
+                class Protector(api_self.Restricted):
                     def get_hidden_obj(self, obj):
                         hidden_obj = self.get_hidden_value(obj)
                         return hidden_obj
 
-                def stack_cleaner(func):
-                    def wrapper(*args, **kwargs):
-                        frames = []
-                        counter = 1
-                        while True:
-                            try:
-                                frame = sys._getframe(counter)
-                            except ValueError:
-                                break
-                            if frame.f_code.co_name == "<module>":
-                                break
-                            f_locals = frame.f_locals
-                            f_locals_copy = dict(f_locals)
-                            frames.append([f_locals, f_locals_copy, frame.f_code])
-                            counter += 1
-                        for frame in frames:
-                            f_locals = frame[0]
-                            f_locals_copy = frame[1]
-                            f_code = frame[2]
-                            for key in f_locals:
-                                if key not in f_code.co_freevars and key != "get_private":
-                                    f_locals[key] = None
-                        hidden_obj = protector.get_hidden_obj(frames)
-                        del f_locals
-                        del f_locals_copy
-                        del f_code
-                        del frames
-                        del frame
-                        try:
-                            value = func(*args, **kwargs)
-                        except Exception as e:
-                            raise Exception(str(e)) # other types of exceptions may unwittingly be handled later on. This one shouldn't be handled.
-                        finally:
-                            frames = hidden_obj.value
-                            for frame in frames:
-                                f_locals = frame[0]
-                                f_locals_copy = frame[1]
-                                for key in f_locals:
-                                    f_locals[key] = f_locals_copy[key]                   
-                        return value
-                    
-                    wrapper.func = func
-                    return wrapper
-                                  
-                DescriptorProxy = api_self.DescriptorProxy
+                    def create_getframe_hook(self):
+                        orig_getframe = sys._getframe
+                        hidden_orig_getframe = self.get_hidden_obj(orig_getframe)
+                        def _getframe(depth):
+                            depth += 1
+                            orig_getframe = hidden_orig_getframe.value
+                            restrict_frame = False
+                            for i in range(1, depth+1):
+                                frame = orig_getframe(i)
+                                if "ban_frames" in frame.f_locals and frame.f_locals["ban_frames"] == True:
+                                    restrict_frame = True
+                                    break
+                            frame = orig_getframe(depth)
+                            if restrict_frame:
+                                frame = RestrictedFrame(frame.f_code)
+                            return frame
+                        
+                        self.authorize(_getframe)
+                        return _getframe                            
+
                 protector = Protector()
-                DescriptorProxy.__get__ = stack_cleaner(DescriptorProxy.__get__)
-                DescriptorProxy.__set__ = stack_cleaner(DescriptorProxy.__set__)
-                DescriptorProxy.__delete__ = stack_cleaner(DescriptorProxy.__delete__)
+                getframe_hook = protector.create_getframe_hook()
+                sys._getframe = getframe_hook
+
+            return hook_getframe
+        
+                
+        @property
+        def hook_descriptor(api_self):
+            def hook_descriptor(descriptor):
+                DescriptorProxy = api_self.DescriptorProxy                
                 if not hasattr(descriptor, "__get__"):
                     del DescriptorProxy.__get__
                 if not hasattr(descriptor, "__set__"):
                     del DescriptorProxy.__set__
                 if not hasattr(descriptor, "__delete__"):
-                    del DescriptorProxy.__delete__                    
+                    del DescriptorProxy.__delete__
                 descriptor_proxy = DescriptorProxy(descriptor)                
-                hidden_obj = protector.get_hidden_obj(descriptor_proxy)
-                descriptor_proxy.hidden_obj = hidden_obj
                 return descriptor_proxy
             return hook_descriptor
 
@@ -1412,7 +1394,316 @@ def create_api():
                     AccessEssentials2 = get_member(self, all_hidden_values[AccessEssentials], "AccessEssentials2")
                     if not hasattr(AccessEssentials2, "check_caller"):
                         AccessEssentials2 = api_self.AccessEssentials
-                    check_caller = types.MethodType(AccessEssentials2.check_caller, self)
+
+                    orig_getframe = sys._getframe
+                    def check_caller(self, all_hidden_values, depth = 1, name = "hidden_values"):
+                        """Go depth frames back in stack and check if the associated caller is authorized to access the name
+
+                        Name is assumed to be either private or protected.
+                        This function should not be called if the name is public.
+                        Because even if it's public, it'll be treated as if it were private.
+                        In that case, return value will probably be wrong."""
+                        def is_function(func):
+                            """We have to duplicate this function for performance reasons"""
+                            try:
+                                code = object.__getattribute__(func, "__code__")
+                            except AttributeError:
+                                has_code = type(func) == types.MethodType
+                            else:
+                                has_code = True
+                            if callable(func) and has_code and type(func.__code__) == types.CodeType:
+                                return True
+                            else:
+                                return False
+
+                        def get_member(self, hidden_values, name):
+                            """We have to duplicate this function because we can't trust AccessEssentials.get_member
+                            This function must be read only and immutable, not just protected.
+                            Otherwise derived classes could bypass private members of their bases.
+                            Functions aren't immutable in python so we completely hide it this way."""
+                            if name in hidden_values:
+                                return hidden_values[name]
+                            elif hasattr(AccessEssentials, name):
+                                func = getattr(AccessEssentials, name)
+                                if is_function(func) and type(func) != types.MethodType:                            
+                                    return types.MethodType(func, self)
+                            return object.__getattribute__(self, name)                    
+                        
+                        depth += 1
+                        common_names = ["_privates_",
+                                        "_protecteds_",
+                                        "_publics_",
+                                        "AccessEssentials2",
+                                        "AccessEssentials3",
+                                        "InsecureRestrictor",
+                                        "private",
+                                        "protected",
+                                        "public"]                    
+                        caller = orig_getframe(depth).f_code
+                        all_privates = []
+                        for cls in all_hidden_values:
+                            if "_privates_" in all_hidden_values[cls]:
+                                all_privates.extend(all_hidden_values[cls]["_privates_"])
+                        all_protecteds = []
+                        for cls in all_hidden_values:
+                            if "_protecteds_" in all_hidden_values[cls]:
+                                all_protecteds.extend(all_hidden_values[cls]["_protecteds_"])
+                        all_publics = []
+                        for cls in all_hidden_values:
+                            if "_publics_" in all_hidden_values[cls]:
+                                all_publics.extend(all_hidden_values[cls]["_publics_"])                            
+                        base_protecteds = type.__getattribute__(type(self), "base_protecteds")
+                        base_privates = type.__getattribute__(type(self), "base_privates")
+                        all_classes = list(all_hidden_values.keys())
+                        AccessEssentials = all_classes[-1]                    
+                        if name == "hidden_values":
+                            for cls in all_hidden_values:
+                                if caller in all_hidden_values[cls]["auth_codes"]:
+                                    return True                            
+                        elif name == "all_hidden_values":
+                            if caller in all_hidden_values[AccessEssentials]["auth_codes"]:
+                                return True                        
+                        else:
+                            should_override = False
+                            cls_has = False
+                            try:                                                
+                                cls_has = hasattr(type(self), name)                                                
+                            except PrivateError as e:
+                                cls_has = True
+                                for base in type(self).__mro__:                        
+                                    try:
+                                        raw_base = type.__getattribute__(base, "protected_gate")
+                                    except AttributeError:
+                                        raw_base = base                            
+                                    else:
+                                        raw_base = raw_base.cls.own_all_hidden_values[type(raw_base.cls)]["cls"]
+                                    try:                            
+                                        value2 = type.__getattribute__(raw_base, name)
+                                        class_dict = type.__getattribute__(raw_base, "__dict__")
+                                        if name in class_dict:
+                                            value2 = class_dict[name]                                            
+                                        type.__delattr__(raw_base, name)
+                                        found = True
+                                    except AttributeError:                                                   
+                                        continue
+                                    except TypeError:
+                                        pass
+                                    else:
+                                        type.__setattr__(raw_base, name, value2)                           
+                                        is_builtin_new = name == "_new_" and value2 == object.__new__
+                                        is_builtin_new2 = name == "__new__" and value2 == object.__new__
+                                        is_builtin = type(value2) == types.WrapperDescriptorType
+                                        if is_builtin_new or is_builtin_new2 or is_builtin:
+                                            continue
+                                        break                                    
+                                should_override = hasattr(value2, "__get__") and (hasattr(value2, "__set__") or hasattr(value2, "__delete__"))                                                                         
+                            else:
+                                if cls_has:
+                                    if name in type(self).__dict__:
+                                        value2 = type(self).__dict__[name]
+                                    else:
+                                        try:
+                                            type(self).get_unbound_base_attr(name)
+                                        except AttributeError: # metaclass member
+                                            cls_has = False
+                                        else:                                    
+                                            for base in type(self).__mro__:                        
+                                                try:
+                                                    raw_base = type.__getattribute__(base, "protected_gate")
+                                                except AttributeError:
+                                                    raw_base = base                            
+                                                else:
+                                                    raw_base = raw_base.cls.own_all_hidden_values[type(raw_base.cls)]["cls"]
+                                                try:                            
+                                                    value2 = type.__getattribute__(raw_base, name)
+                                                    class_dict = type.__getattribute__(raw_base, "__dict__")
+                                                    if name in class_dict:
+                                                        value2 = class_dict[name]                                            
+                                                    type.__delattr__(raw_base, name)
+                                                    found = True
+                                                except AttributeError:                                                   
+                                                    continue
+                                                except TypeError:
+                                                    pass
+                                                else:
+                                                    type.__setattr__(raw_base, name, value2)                           
+                                                    is_builtin_new = name == "_new_" and value2 == object.__new__
+                                                    is_builtin_new2 = name == "__new__" and value2 == object.__new__
+                                                    is_builtin = type(value2) == types.WrapperDescriptorType
+                                                    if is_builtin_new or is_builtin_new2 or is_builtin:
+                                                        continue
+                                                    break
+                                    if cls_has:
+                                        try:
+                                            should_override = hasattr(value2, "__get__") and (hasattr(value2, "__set__") or hasattr(value2, "__delete__"))
+                                        except RuntimeError:
+                                            should_override = False
+
+                            if not should_override:
+                                is_public = False
+                                try:
+                                    class_id = type.__getattribute__(type(self), "class_id")
+                                except AttributeError:
+                                    has_class_id = False
+                                else:
+                                    has_class_id = True                            
+                                if has_class_id and class_id == "access_modifiers.SecureClass":
+                                    for cls in all_hidden_values:
+                                        cls_has_name = name in all_hidden_values[cls] or \
+                                                       (cls == type(self) and "cls" in all_hidden_values[cls] and name in all_hidden_values[cls]["cls"]._privates_)
+                                        if cls_has_name and (name not in common_names or caller in all_hidden_values[cls]["auth_codes"]):
+                                            break
+                                    else:
+                                        for cls in all_hidden_values:
+                                            if "_publics_" in all_hidden_values[cls] and name in all_hidden_values[cls]["_publics_"]:
+                                                is_public = True
+                                                break
+                                else:                        
+                                    for cls in all_hidden_values:
+                                        if name in all_hidden_values[cls] and (name not in common_names or caller in all_hidden_values[cls]["auth_codes"]):
+                                            break
+                                    else:
+                                        for cls in all_hidden_values:
+                                            if "_publics_" in all_hidden_values[cls] and name in all_hidden_values[cls]["_publics_"]:
+                                                is_public = True
+                                                break
+                                            
+                                if caller in all_hidden_values[cls]["auth_codes"]:
+                                    return True                        
+                                for base in cls.__mro__:
+                                    if base is object:
+                                        break
+                                    try:
+                                        base = type.__getattribute__(base, "protected_gate")
+                                    except AttributeError:
+                                        pass
+                                    else:
+                                        base = base.cls.own_all_hidden_values[type(base.cls)]["cls"]                          
+                                    InsecureRestrictor = get_member(self, all_hidden_values[AccessEssentials], "InsecureRestrictor")
+                                    if InsecureRestrictor.is_access_essentials(base):
+                                        base = AccessEssentials                            
+                                    if caller in all_hidden_values[base]["auth_codes"]:
+                                        return True
+                                if name in all_protecteds or is_public:
+                                    private_base_holders = []
+                                    for cls2 in reversed(all_hidden_values.keys()):
+                                        if hasattr(cls2, "private_bases") and cls2.private_bases != []:
+                                            broken = False
+                                            for private_base in cls2.private_bases:
+                                                if not isinstance(private_base, type):
+                                                    private_base = private_base.own_all_hidden_values[type(private_base)]["cls"]
+                                                    for cls3 in private_base.__mro__:
+                                                        try:
+                                                            cls3 = type.__getattribute__(cls3, "protected_gate")
+                                                        except AttributeError:
+                                                            pass
+                                                        else:
+                                                            cls3 = cls3.cls.own_all_hidden_values[type(cls3.cls)]["cls"]
+                                                        if cls3 == cls:
+                                                            private_base_holders.append(cls2)
+                                                            broken = True
+                                                            break
+                                                if broken:
+                                                    break
+                                    for cls4 in all_hidden_values:
+                                        if cls4 in cls._subclasses_ and caller in all_hidden_values[cls4]["auth_codes"]:
+                                            if private_base_holders == []:
+                                                return True
+                                            if all(cls4 not in private_base_holder._subclasses_ for private_base_holder in private_base_holders):
+                                                return True                                    
+
+                            if (name not in all_privates and name not in all_publics) or should_override:
+                                for caller_class in all_hidden_values:
+                                    if caller in all_hidden_values[caller_class]["auth_codes"]:
+                                        external_caller = False
+                                        break
+                                else:
+                                    external_caller = True
+                                for cls in all_hidden_values:
+                                    try:
+                                        type.__getattribute__(cls, "_privates_")
+                                    except AttributeError:
+                                        class_has = False
+                                    else:
+                                        class_has = True                                
+                                    if class_has and (name in cls._privates_ or name in cls.base_privates or name in cls._publics_):
+                                        break
+                                if caller in all_hidden_values[cls]["auth_codes"]:
+                                    return True
+                                for base in cls.__mro__:
+                                    if base is object:
+                                        break
+                                    try:
+                                        base = type.__getattribute__(base, "protected_gate")
+                                    except AttributeError:
+                                        pass
+                                    else:
+                                        base = base.cls.own_all_hidden_values[type(base.cls)]["cls"]                            
+                                    InsecureRestrictor = get_member(self, all_hidden_values[AccessEssentials], "InsecureRestrictor")
+                                    if InsecureRestrictor.is_access_essentials(base):
+                                        base = AccessEssentials
+                                    if caller in all_hidden_values[base]["auth_codes"]:
+                                        return True
+                                
+                                try:
+                                    class_id = type.__getattribute__(type(self), "class_id")
+                                except AttributeError:
+                                    has_class_id = False
+                                else:
+                                    has_class_id = True
+                                    
+                                if has_class_id and class_id == "access_modifiers.SecureClass" and "cls" in all_hidden_values[type(self)]:
+                                    raw_class = all_hidden_values[type(self)]["cls"]
+                                else:
+                                    raw_class = type(self)
+                                    
+                                if hasattr(caller_class, "is_protected"):
+                                    is_protected = caller_class.is_protected(name)
+                                else:
+                                    is_protected = name in caller_class._protecteds_                                
+                                if not is_protected:
+                                    try:
+                                        class_id = type.__getattribute__(type(self), "class_id")
+                                    except AttributeError:
+                                        has_class_id = False
+                                    else:
+                                        has_class_id = True
+                                        
+                                    if has_class_id and class_id == "access_modifiers.SecureClass" and "cls" in all_hidden_values[type(self)]:
+                                        raw_class = all_hidden_values[type(self)]["cls"]
+                                        if hasattr(raw_class, "is_protected"):
+                                            is_protected = raw_class.is_protected(name)
+                                        else:
+                                            is_protected = name in raw_class._protecteds_                                        
+                                            
+                                if is_protected:
+                                    for cls2 in all_hidden_values:
+                                        if cls2 in cls._subclasses_ and caller in all_hidden_values[cls2]["auth_codes"]:
+                                            return True
+                                    for cls2 in cls._subclasses_:                       
+                                        for member_name in cls2.__dict__:
+                                            member = cls2.__dict__[member_name]
+                                            if is_function(member) and member.__code__ == caller:
+                                                return True
+                                                                        
+                        is_subclass_method = types.MethodType(get_member(self, all_hidden_values[AccessEssentials], "AccessEssentials2").is_subclass_method, self)                    
+                        try:
+                            class_id = type.__getattribute__(type(self), "class_id")
+                        except AttributeError:
+                            has_class_id = False
+                        else:
+                            has_class_id = True
+                            
+                        if has_class_id and class_id == "access_modifiers.SecureClass" and "cls" in all_hidden_values[type(self)]:
+                            cls = all_hidden_values[type(self)]["cls"]
+                        else:
+                            cls = type(self)
+                        is_protected = name in all_protecteds or (name in base_protecteds and name not in all_privates and cls.is_protected(name))
+                        if is_protected and is_subclass_method(all_hidden_values, depth = depth):                        
+                            return True                    
+                        return False
+                                    
+                    check_caller = types.MethodType(check_caller, self)
                     class CellProtector:
                         def __get__(self, instance, owner):                            
                             if check_caller(all_hidden_values, name = name) and type(instance) == HiddenValue:
@@ -2193,7 +2484,7 @@ def create_api():
                                                        types.WrapperDescriptorType,
                                                        types.MemberDescriptorType]
                                             if type(value2) not in allowed and \
-                                               (not hasattr(value2.__get__, "func") or value2.__get__.func.__code__ != api_self.DescriptorProxy.__get__.__code__):
+                                               (value2.__get__.__code__ != api_self.DescriptorProxy.__get__.__code__):
                                                 raise PrivateError("raw descriptors are not allowed. Use access_specifiers.hook_descriptor()")                                            
                                             value = value2.__get__(self)
                                         else:                                                                                
@@ -2571,7 +2862,7 @@ def create_api():
                                                        types.WrapperDescriptorType,
                                                        types.MemberDescriptorType]
                                             if type(value2) not in allowed and \
-                                               (not hasattr(value2.__set__, "func") or value2.__set__.func.__code__ != api_self.DescriptorProxy.__set__.__code__):
+                                               (value2.__set__.__code__ != api_self.DescriptorProxy.__set__.__code__):
                                                 raise PrivateError("raw descriptors are not allowed. Use access_specifiers.hook_descriptor()")                                            
                                             value2.__set__(self, value)
                                         else:                                        
@@ -2600,7 +2891,7 @@ def create_api():
                                                        types.WrapperDescriptorType,
                                                        types.MemberDescriptorType]
                                             if type(value2) not in allowed and \
-                                               (not hasattr(value2.__set__, "func") or value2.__set__.func.__code__ != api_self.DescriptorProxy.__set__.__code__):
+                                               (value2.__set__.__code__ != api_self.DescriptorProxy.__set__.__code__):
                                                 raise PrivateError("raw descriptors are not allowed. Use access_specifiers.hook_descriptor()")                                            
                                             value2.__set__(self, value)
                                         else:                                                                                
@@ -2955,7 +3246,7 @@ def create_api():
                                                    types.WrapperDescriptorType,
                                                    types.MemberDescriptorType]
                                         if type(value2) not in allowed and \
-                                           (not hasattr(value2.__delete__, "func") or value2.__delete__.func.__code__ != api_self.DescriptorProxy.__delete__.__code__):
+                                           (value2.__delete__.__code__ != api_self.DescriptorProxy.__delete__.__code__):
                                             raise PrivateError("raw descriptors are not allowed. Use access_specifiers.hook_descriptor()")                                                                                    
                                         value2.__delete__(self)
                                     else:                                                                                                                            
@@ -4668,7 +4959,7 @@ def create_api():
                                                    types.WrapperDescriptorType,
                                                    types.MemberDescriptorType]
                                         if type(value) not in allowed and name != "__new__" and \
-                                           (not hasattr(value.__get__, "func") or value.__get__.func.__code__ != api_self.DescriptorProxy.__get__.__code__):
+                                           (value.__get__.__code__ != api_self.DescriptorProxy.__get__.__code__):
                                             raise PrivateError("raw descriptors are not allowed. Use access_specifiers.hook_descriptor()")
                                         value = type.__getattribute__(cls, name)
                                     else:
@@ -5036,30 +5327,19 @@ def create_api():
                         private.base_protecteds = cls.base_protecteds
                         private.base_privates = cls.base_privates
                         self.cls.secure_class = self                        
-                        self.cls._publics_.append("secure_class")                        
-                        mro = [self.cls]
-                        for base in type(self).__mro__:
-                            if base is object:
-                                break
+                        self.cls._publics_.append("secure_class")
+                                                  
+                        for key, value in dict(cls.__dict__).items():
                             try:
-                                base = type.__getattribute__(base, "protected_gate")
-                            except AttributeError:
-                                pass
+                                is_descriptor = hasattr(value, "__get__") or hasattr(value, "__set__") or hasattr(value, "__delete__")
+                            except RuntimeError:
+                                is_descriptor = False
                             else:
-                                base = base.cls.own_all_hidden_values[type(base.cls)]["cls"]
-                            mro.append(base)
-                        for cls in mro:                            
-                            for key, value in dict(cls.__dict__).items():
-                                try:
-                                    is_descriptor = hasattr(value, "__get__") or hasattr(value, "__set__") or hasattr(value, "__delete__")
-                                except RuntimeError:
-                                    is_descriptor = False
-                                else:
-                                    is_descriptor = is_descriptor and key != "__dict__"                           
-                                if is_descriptor and type(value) != types.FunctionType and key not in ["__new__", "__weakref__"]:
-                                    if hasattr(value, "wrapped_desc"):
-                                        value = value.wrapped_desc
-                                    type.__setattr__(cls, key, api_self.hook_descriptor(value))
+                                is_descriptor = is_descriptor and key != "__dict__"                           
+                            if is_descriptor and type(value) != types.FunctionType and key not in ["__new__", "__weakref__"]:
+                                if hasattr(value, "wrapped_desc"):
+                                    value = value.wrapped_desc
+                                type.__setattr__(cls, key, api_self.hook_descriptor(value))
 
                         all_names = self.cls.__dict__                        
                         for member_name in all_names:                        
@@ -5091,19 +5371,18 @@ def create_api():
                                                 break
                                             self.authorize(func)                                            
                                         type.__setattr__(self.cls, member_name, func)
-                        
-                        for cls in mro:                            
-                            for key, value in dict(cls.__dict__).items():
-                                try:
-                                    is_descriptor = hasattr(value, "__get__") or hasattr(value, "__set__") or hasattr(value, "__delete__")
-                                except RuntimeError:
-                                    is_descriptor = False
-                                else:
-                                    is_descriptor = is_descriptor and key != "__dict__"                           
-                                if is_descriptor and type(value) != types.FunctionType and key not in ["__new__", "__weakref__"]:
-                                    if hasattr(value, "wrapped_desc"):
-                                        value = value.wrapped_desc
-                                    type.__setattr__(cls, key, api_self.hook_descriptor(value))
+                                                  
+                        for key, value in dict(cls.__dict__).items():
+                            try:
+                                is_descriptor = hasattr(value, "__get__") or hasattr(value, "__set__") or hasattr(value, "__delete__")
+                            except RuntimeError:
+                                is_descriptor = False
+                            else:
+                                is_descriptor = is_descriptor and key != "__dict__"                           
+                            if is_descriptor and type(value) != types.FunctionType and key not in ["__new__", "__weakref__"]:
+                                if hasattr(value, "wrapped_desc"):
+                                    value = value.wrapped_desc
+                                type.__setattr__(cls, key, api_self.hook_descriptor(value))
                                        
                         self.authorize(api_self.InsecureRestrictor.get_mro)
                         self.authorize(api_self.InsecureRestrictor.update_subclasses)
@@ -5935,7 +6214,7 @@ def create_api():
                                                        types.WrapperDescriptorType,
                                                        types.MemberDescriptorType]
                                             if type(value) not in allowed and name != "__new__" and \
-                                               (not hasattr(value.__get__, "func") or value.__get__.func.__code__ != api_self.DescriptorProxy.__get__.__code__):
+                                               (value.__get__.__code__ != api_self.DescriptorProxy.__get__.__code__):
                                                 raise PrivateError("raw descriptors are not allowed. Use access_specifiers.hook_descriptor()")
                                             if type(value) != types.FunctionType:
                                                 inst = secure_instance.inst
@@ -6146,7 +6425,8 @@ def create_api():
                             break
                     else:
                         cls_found = False
-                    get_private("all_hidden_values")[AccessEssentials]["hidden_store"].value.inst_auth_codes.remove(get_private("all_hidden_values")[AccessEssentials]["hidden_store"].value._getattribute_.__code__)
+                    if not cls_found or cls != AccessEssentials2:
+                        get_private("all_hidden_values")[AccessEssentials]["hidden_store"].value.inst_auth_codes.remove(get_private("all_hidden_values")[AccessEssentials]["hidden_store"].value._getattribute_.__code__)
                     if "called" not in get_private("hidden_values"):
                         get_private("hidden_values")["called"] = True
                         get_private("hidden_values")["classes"] = [cls]
@@ -6212,7 +6492,8 @@ def create_api():
                             break
                     else:
                         cls_found = False
-                    get_private("all_hidden_values")[AccessEssentials]["hidden_store"].value.inst_auth_codes.remove(self._setattr_.__code__)                                            
+                    if not cls_found or cls != AccessEssentials2:
+                        get_private("all_hidden_values")[AccessEssentials]["hidden_store"].value.inst_auth_codes.remove(self._setattr_.__code__)                                            
                     try:
                         get_private("hidden_values")["redirect_access"] = True
                         if cls_will_redirect:
@@ -6256,8 +6537,9 @@ def create_api():
                             cls_found = True
                             break
                     else:
-                        cls_found = False                    
-                    get_private("all_hidden_values")[AccessEssentials]["hidden_store"].value.inst_auth_codes.remove(self._delattr_.__code__)                                                                    
+                        cls_found = False
+                    if not cls_found or cls != AccessEssentials2:
+                        get_private("all_hidden_values")[AccessEssentials]["hidden_store"].value.inst_auth_codes.remove(self._delattr_.__code__)                                                                    
                     try:
                         get_private("hidden_values")["redirect_access"] = True
                         if cls_will_redirect:
@@ -6279,36 +6561,16 @@ def create_api():
                             type(self).own_redirect_access = True
 
                 def __enter__(self):
-                    get_private = object.__getattribute__(self, "get_private")                    
-                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
-                    @no_redirect(get_private("all_hidden_values"))
-                    def __enter__(self):
-                        return self.inst.__enter__()
-                    return __enter__(self)
+                    return self.__enter__()
 
                 def __exit__(self, exc_type, exc_value, traceback):
-                    get_private = object.__getattribute__(self, "get_private")                    
-                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
-                    @no_redirect(get_private("all_hidden_values"))
-                    def __exit__(self, exc_type, exc_value, traceback):
-                        return self.inst.__exit__(exc_type, exc_value, traceback)
-                    return __exit__(self, exc_type, exc_value, traceback)                
+                    return self.__exit__(exc_type, exc_value, traceback)               
 
                 def __aenter__(self):
-                    get_private = object.__getattribute__(self, "get_private")                    
-                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
-                    @no_redirect(get_private("all_hidden_values"))
-                    def __aenter__(self):
-                        return self.inst.__aenter__()
-                    return __aenter__(self)
+                    return self.__aenter__()
 
                 def __aexit__(self, exc_type, exc_value, traceback):
-                    get_private = object.__getattribute__(self, "get_private")                    
-                    no_redirect = types.MethodType(api_self.AccessEssentials.no_redirect, self)
-                    @no_redirect(get_private("all_hidden_values"))
-                    def __aexit__(self, exc_type, exc_value, traceback):
-                        return self.inst.__aexit__(exc_type, exc_value, traceback)
-                    return __aexit__(self, exc_type, exc_value, traceback)                
+                    return self.__aexit__(exc_type, exc_value, traceback)               
                    
             return SecureInstance
 
@@ -6524,4 +6786,5 @@ class SecureApi(metaclass = raw_api.Restrictor):
             value = getattr(get_private("api"), name)
         return value
 
-api = SecureApi()      
+api = SecureApi()
+api.hook_getframe()

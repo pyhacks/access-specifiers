@@ -81,6 +81,15 @@ class Test(access_specifiers.Restricted):
         self.fghd = 65
         self.get_class()
 
+    @access_specifiers.private
+    def __enter__(self):
+        print("in __enter__")
+        return self
+
+    @access_specifiers.private
+    def __exit__(self, exc_type, exc_value, traceback):
+        print("in __exit__")
+        
     @access_specifiers.Decorator(classmethod)
     def instantiate(cls):
         return cls()

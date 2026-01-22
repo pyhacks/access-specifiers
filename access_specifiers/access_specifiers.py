@@ -5405,13 +5405,70 @@ def create_api():
                         AccessEssentials = list(all_hidden_values.keys())[-1]
                         all_hidden_values[AccessEssentials]["auth_codes"].add(object.__getattribute__(super_, "__getattribute__").__code__)
                         self.super()
+
+                        def create_raise_PrivateError2():
+                            def raise_PrivateError2(self, name, depth = 3, inherited = False):
+                                pass
+
+                            return raise_PrivateError2
+
+                        raise_PrivateError2 = create_raise_PrivateError2()
+                        raise_PrivateError2.__code__ = type(self).raise_PrivateError2.__code__
+                        private.raise_PrivateError2 = types.MethodType(raise_PrivateError2, self)
+
+                        def create_raise_ProtectedError2():
+                            def raise_ProtectedError2(self, name, depth = 3):
+                                pass
+
+                            return raise_ProtectedError2
+
+                        raise_ProtectedError2 = create_raise_ProtectedError2()
+                        raise_ProtectedError2.__code__ = type(self).raise_ProtectedError2.__code__
+                        private.raise_ProtectedError2 = types.MethodType(raise_ProtectedError2, self)
+
+                        def create_is_ro_method():
+                            a = type(self).is_ro_method.__closure__[0].cell_contents
+                            b = type(self).is_ro_method.__closure__[1].cell_contents
+                            def is_ro_method(self, name, value):
+                                a
+                                b
+
+                            return is_ro_method
+
+                        is_ro_method = create_is_ro_method()                        
+                        is_ro_method.__code__ = type(self).is_ro_method.__code__
+                        private.is_ro_method = types.MethodType(is_ro_method, self)
+
+                        def create_create_secure_method():
+                            def create_secure_method(self, method):
+                                pass
+
+                            return create_secure_method
+
+                        create_secure_method = create_create_secure_method()                        
+                        create_secure_method.__code__ = type(self).create_secure_method.__code__
+                        private.create_secure_method = types.MethodType(create_secure_method, self)
+
+                        def create_is_subclass_method2():                            
+                            def is_subclass_method2(self, all_hidden_values, cls, depth = 1):
+                                pass
+
+                            return is_subclass_method2
+
+                        is_subclass_method2 = create_is_subclass_method2()
+                        is_subclass_method2.__code__ = type(self).is_subclass_method2.__code__
+                        private.is_subclass_method2 = types.MethodType(is_subclass_method2, self)
                         
-                        private.raise_PrivateError2 = self.raise_PrivateError2
-                        private.raise_ProtectedError2 = self.raise_ProtectedError2
-                        private.is_ro_method = self.is_ro_method
-                        private.create_secure_method = self.create_secure_method
-                        private.is_subclass_method2 = self.is_subclass_method2                        
-                        private.control_access = self.control_access
+                        def create_control_access():
+                            a = type(self).control_access.__closure__[0].cell_contents
+                            def control_access(self, name):
+                                a
+
+                            return control_access
+
+                        control_access = create_control_access()
+                        control_access.__code__ = type(self).control_access.__code__
+                        private.control_access = types.MethodType(control_access, self)
 
                     AccessEssentials = list(all_hidden_values.keys())[-1]
                     all_hidden_values[AccessEssentials]["auth_codes"].add(__init__.func.__code__)
@@ -6031,9 +6088,37 @@ def create_api():
                         type(self).own_redirect_access = False
                     try:
                         self.private.inst = inst
-                        self.private.raise_PrivateError2 = self.raise_PrivateError2
-                        self.private.raise_ProtectedError2 = self.raise_ProtectedError2
-                        self.private.create_secure_method = self.create_secure_method
+
+                        def create_raise_PrivateError2():
+                            def raise_PrivateError2(self, name, depth = 3, inherited = False):
+                                pass
+
+                            return raise_PrivateError2
+
+                        raise_PrivateError2 = create_raise_PrivateError2()
+                        raise_PrivateError2.__code__ = type(self).raise_PrivateError2.__code__
+                        self.private.raise_PrivateError2 = types.MethodType(raise_PrivateError2, self)
+
+                        def create_raise_ProtectedError2():
+                            def raise_ProtectedError2(self, name, depth = 3):
+                                pass
+
+                            return raise_ProtectedError2
+
+                        raise_ProtectedError2 = create_raise_ProtectedError2()
+                        raise_ProtectedError2.__code__ = type(self).raise_ProtectedError2.__code__
+                        self.private.raise_ProtectedError2 = types.MethodType(raise_ProtectedError2, self)
+
+                        def create_create_secure_method():
+                            def create_secure_method(self, method):
+                                pass
+
+                            return create_secure_method
+
+                        create_secure_method = create_create_secure_method()
+                        create_secure_method.__code__ = type(self).create_secure_method.__code__
+                        self.private.create_secure_method = types.MethodType(create_secure_method, self)
+                        
                         self.authorize(api_self.InsecureRestrictor.modify_attr)
                         self.authorize(api_self.InsecureRestrictor.set_class_public)
                         self.authorize(api_self.InsecureRestrictor.set_class_protected)

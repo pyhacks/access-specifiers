@@ -404,8 +404,8 @@ def create_bypass():
 def test():
     for base in ClassC.__mro__:
         print(base.__name__)
-    ClassC().MethodA()    
-    a = Test()
+    ClassC().MethodA()
+    a = Test()    
     a.public_static1()
     a.public1()
     a.show_a()
